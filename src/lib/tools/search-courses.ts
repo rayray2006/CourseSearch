@@ -80,6 +80,22 @@ export const searchCourses = tool({
       .string()
       .optional()
       .describe("Course number or partial, e.g. 'EN.601' or '601.226'"),
+    descriptionKeyword: z
+      .string()
+      .optional()
+      .describe(
+        "Keywords to search in the course description (case-insensitive). Each word matched independently. Use for topic-based searches like 'machine learning' or 'data analysis'."
+      ),
+    hasPrerequisites: z
+      .boolean()
+      .optional()
+      .describe("If true, only return courses that have prerequisites listed. If false, only courses with no prerequisites."),
+    prerequisiteKeyword: z
+      .string()
+      .optional()
+      .describe(
+        "Search within prerequisites text, e.g. a course number like 'EN.601.226' or keyword like 'calculus'. Finds courses that require a specific prerequisite."
+      ),
   }),
   execute: async (input) => {
     const db = getDb();
@@ -162,12 +178,38 @@ export const searchCourses = tool({
       conditions.push("offering_name LIKE @courseNumber");
       params.courseNumber = `%${input.courseNumber}%`;
     }
+    if (input.descriptionKeyword) {
+      const words = input.descriptionKeyword.split(/\s+/).filter((w) => w.length > 0);
+      words.forEach((word, i) => {
+        const paramName = `descWord${i}`;
+        conditions.push(`description LIKE @${paramName}`);
+        params[paramName] = `%${word}%`;
+      });
+    }
+    if (input.hasPrerequisites === true) {
+      conditions.push("prerequisites != ''");
+    } else if (input.hasPrerequisites === false) {
+      conditions.push("(prerequisites = '' OR prerequisites IS NULL)");
+    }
+    if (input.prerequisiteKeyword) {
+      const words = input.prerequisiteKeyword.split(/\s+/).filter((w) => w.length > 0);
+      words.forEach((word, i) => {
+        const paramName = `prereqWord${i}`;
+        conditions.push(`prerequisites LIKE @${paramName}`);
+        params[paramName] = `%${word}%`;
+      });
+    }
 
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const sql = `
-      SELECT * FROM courses
+      SELECT offering_name, section_name, title, credits, department, school_name,
+             level, status, meetings, location, building, instruction_method,
+             instructors_full_name, max_seats, open_seats, waitlisted,
+             is_writing_intensive, areas, time_of_day, description, prerequisites,
+             corequisites, restrictions
+      FROM courses
       ${where}
       ORDER BY offering_name, section_name
       LIMIT 20

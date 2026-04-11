@@ -37,6 +37,12 @@ Tips for translating queries:
 - "open courses" → status: "Open"
 - "online" → instructionMethod: "online"
 - "writing intensive" → writingIntensive: true
+- "courses about machine learning" → descriptionKeyword: "machine learning"
+- "what are the prerequisites for X" → search for the course, then show its prerequisites field
+- "courses that require calculus" → prerequisiteKeyword: "calculus"
+- "courses with no prerequisites" → hasPrerequisites: false
+
+When showing course details, include the description and prerequisites if available.
 
 Always be conversational and helpful. If the user's query is ambiguous, ask clarifying questions.`,
   tools: {
