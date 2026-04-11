@@ -3,7 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { isToolUIPart } from "ai";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import type { CourseAgentUIMessage } from "@/lib/agents/course-agent";
 
 interface ScheduledCourse {
@@ -129,11 +129,12 @@ function md(text: string): string {
 const COURSE_CODE_RE = /[A-Z]{2}\.\d{3}\.\d{3}/g;
 const SECTION_RE = /Section\s+(\d{2})/g;
 
-function MessageContent({ html, onAdd, onPreview, onPreviewEnd }: {
+function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCourses }: {
   html: string;
   onAdd: (code: string, section: string) => void;
   onPreview: (code: string, section: string) => void;
   onPreviewEnd: () => void;
+  validCourses: Set<string>;
 }) {
   // Combined regex: match either a course code or a "Section NN" pattern
   const TOKEN_RE = /([A-Z]{2}\.\d{3}\.\d{3})|Section\s+(\d{2})/g;
@@ -204,18 +205,17 @@ function MessageContent({ html, onAdd, onPreview, onPreviewEnd }: {
           return <span key={i} dangerouslySetInnerHTML={{ __html: p.text }} />;
         }
         if (p.type === "code") {
+          const isValid = validCourses.has(p.value!);
           const sections = codeSectionCount.get(i) || 0;
-          if (sections <= 1) {
-            // No sections or single section listed — show add button on the course name
+          if (sections <= 1 && isValid) {
             const section = codeFirstSection.get(i) || "01";
             return <strong key={i}>{p.text}{addBtn(p.value!, section)}</strong>;
           }
-          // Multiple sections — buttons go on each section line
           return <strong key={i}>{p.text}</strong>;
         }
         if (p.type === "section") {
           const courseCode = sectionCourseMap.get(i) || "";
-          if (!courseCode) return <span key={i}>{p.text}</span>;
+          if (!courseCode || !validCourses.has(courseCode)) return <span key={i}>{p.text}</span>;
           return <span key={i}>{p.text}{addBtn(courseCode, p.value!)}</span>;
         }
         return <span key={i}>{p.text}</span>;
@@ -264,6 +264,27 @@ export default function Home() {
   const [schedule, setSchedule] = useState<ScheduledCourse[]>([]);
   const [selected, setSelected] = useState<ScheduledCourse | null>(null);
   const [previewCourse, setPreviewCourse] = useState<ScheduledCourse | null>(null);
+
+  // Build set of valid course codes from tool outputs in messages
+  const validCourses = useMemo(() => {
+    const codes = new Set<string>();
+    for (const msg of messages) {
+      for (const part of msg.parts) {
+        if ("output" in part && part.output) {
+          try {
+            const output = part.output as Record<string, unknown>;
+            const courses = (output.courses || output.results) as Record<string, string>[] | undefined;
+            if (Array.isArray(courses)) {
+              for (const c of courses) {
+                if (c.offering_name) codes.add(c.offering_name);
+              }
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    }
+    return codes;
+  }, [messages]);
 
   // Cache fetched course data for preview hover
   const previewCache = useRef(new Map<string, ScheduledCourse | null>());
@@ -944,6 +965,7 @@ export default function Home() {
                       >
                         <MessageContent
                           html={md(part.text)}
+                          validCourses={validCourses}
                           onAdd={async (code, section) => {
                             await fetch("/api/schedule", {
                               method: "POST",
