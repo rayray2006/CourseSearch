@@ -7,58 +7,113 @@ const COURSE_COLUMNS = "offering_name, section_name, title, credits, department,
 export const searchCourses = tool({
   description: `Search JHU Fall 2026 courses. Use this to find courses matching criteria like title keywords, department, school, level, schedule, credits, instructor, etc. Returns up to 20 results. For broad queries, encourage the user to narrow down.`,
   inputSchema: z.object({
-    titleKeyword: z
-      .string()
-      .optional()
-      .describe(
-        "Keywords to search in course title (case-insensitive). Multiple words are matched independently — each word must appear somewhere in the title but not necessarily adjacent. E.g. 'sensor robotics' matches 'Algorithms for Sensor-Based Robotics'. Use short distinctive keywords rather than full phrases."
-      ),
+    // ── Text search ──
+    titleKeyword: z.string().optional().describe(
+      "Keywords to search in course title (case-insensitive, substring match). Each word matched independently. Use actual substrings, not abbreviations."
+    ),
+    descriptionKeyword: z.string().optional().describe("Keywords to search in course description (case-insensitive, substring)."),
+    courseNumber: z.string().optional().describe("Course number or partial, e.g. 'EN.601' or '601.226' or 'EN.601.226'."),
+
+    // ── Department / school / level ──
     department: z.string().optional().describe("Department name or partial match, e.g. 'Computer Science'."),
-    school: z.string().optional().describe("School name or partial match, e.g. 'Whiting' or 'Krieger'"),
-    level: z
-      .enum(["Lower Level Undergraduate", "Upper Level Undergraduate", "Graduate", "Graduate Independent Academic Work", "Independent Academic Work", "Doctoral", "Post-Doctoral", "PostDoctoral"])
-      .optional()
-      .describe("Course level — use the exact value"),
-    credits: z.string().optional().describe("Credit amount, e.g. '3.00'. Matches both exact credits and range credits."),
-    instructor: z.string().optional().describe("Instructor last name or partial match"),
-    daysOfWeek: z.string().optional().describe("Day pattern that starts the meetings field, e.g. 'MWF', 'TTh', 'MW', 'M', 'F'. Matches the EXACT day prefix."),
-    timeOfDay: z.enum(["Morning", "Afternoon", "Evening", "Other"]).optional().describe("Time of day filter"),
-    status: z.enum(["Open", "Closed", "Waitlist Only", "Canceled", "Approval Required", "Reserved Open"]).optional().describe("Course status — use exact value."),
-    writingIntensive: z.boolean().optional().describe("If true, only return writing intensive courses"),
-    instructionMethod: z.enum(["in-person", "online", "blended"]).optional().describe("Instruction method"),
-    areas: z.string().optional().describe("Distribution area keyword"),
-    courseNumber: z.string().optional().describe("Course number or partial, e.g. 'EN.601' or '601.226'"),
-    minOverallQuality: z.number().optional().describe("Minimum overall quality rating (1-5)."),
-    maxWorkload: z.number().optional().describe("Maximum workload rating (1-5)."),
-    hasEvaluations: z.boolean().optional().describe("If true, only return courses with evaluation data."),
-    descriptionKeyword: z.string().optional().describe("Keywords to search in course description."),
+    school: z.string().optional().describe("School name or partial match, e.g. 'Whiting' or 'Krieger'."),
+    level: z.enum(["Lower Level Undergraduate", "Upper Level Undergraduate", "Graduate", "Graduate Independent Academic Work", "Independent Academic Work", "Doctoral"]).optional()
+      .describe("Course level — use the exact value."),
+
+    // ── Instructor ──
+    instructor: z.string().optional().describe("Instructor name or partial match (searches full name field)."),
+
+    // ── Schedule ──
+    daysOfWeek: z.string().optional().describe("Day pattern prefix, e.g. 'MWF', 'TTh', 'MW', 'M', 'F'. Matches the EXACT day prefix of the meetings field."),
+    timeOfDay: z.enum(["Morning", "Afternoon", "Evening", "Other"]).optional().describe("Time of day bucket."),
+
+    // ── Logistics ──
+    credits: z.string().optional().describe("Credit amount, e.g. '3.00'. Matches exact or ranges containing this value."),
+    minCredits: z.number().optional().describe("Minimum credits (inclusive). Use for 'at least N credits'."),
+    maxCredits: z.number().optional().describe("Maximum credits (inclusive). Use for 'at most N credits'."),
+    status: z.enum(["Open", "Closed", "Waitlist Only", "Canceled", "Approval Required", "Reserved Open"]).optional()
+      .describe("Course status — use exact value."),
+    instructionMethod: z.enum(["in-person", "online", "blended"]).optional().describe("Instruction method."),
+    writingIntensive: z.boolean().optional().describe("If true, only return writing intensive courses."),
+    areas: z.string().optional().describe("Distribution area keyword, e.g. 'Science and Data', 'Ethics', 'Writing and Communication'."),
+    building: z.string().optional().describe("Building name or partial match, e.g. 'Hodson', 'Krieger', 'Shaffer'."),
+
+    // ── Seats ──
+    hasOpenSeats: z.boolean().optional().describe("If true, only courses with open seats > 0. If false, only full courses."),
+
+    // ── Prerequisites ──
     hasPrerequisites: z.boolean().optional().describe("If true, only courses with prerequisites. If false, only without."),
-    prerequisiteKeyword: z.string().optional().describe("Find courses that require a specific prerequisite. Accepts a course code or name."),
+    prerequisiteKeyword: z.string().optional().describe("Find courses that require a specific prerequisite. Accepts a course code (EN.601.226) or name (data structures)."),
+
+    // ── Evaluation filters ──
+    hasEvaluations: z.boolean().optional().describe("If true, only return courses with evaluation data."),
+    minOverallQuality: z.number().optional().describe("Minimum overall quality rating (1-5)."),
+    maxOverallQuality: z.number().optional().describe("Maximum overall quality rating (1-5). Use to find poorly-rated courses."),
+    minInstructorEffectiveness: z.number().optional().describe("Minimum instructor effectiveness rating (1-5)."),
+    minIntellectualChallenge: z.number().optional().describe("Minimum intellectual challenge rating (1-5). Use to find challenging courses."),
+    maxIntellectualChallenge: z.number().optional().describe("Maximum intellectual challenge rating (1-5). Use to find less challenging courses."),
+    minWorkload: z.number().optional().describe("Minimum workload rating (1-5, 1=much lighter, 5=much heavier). Use to find heavy-workload courses."),
+    maxWorkload: z.number().optional().describe("Maximum workload rating (1-5). Use to find lighter courses."),
+    minRespondents: z.number().optional().describe("Minimum total respondents across all semesters. Use for statistically significant evals (e.g. 50, 100)."),
+
+    // ── Sorting ──
+    sortBy: z.enum([
+      "overall_quality", "workload", "num_respondents", "num_evaluations",
+      "instructor_effectiveness", "intellectual_challenge", "feedback_usefulness",
+      "credits", "open_seats", "title",
+    ]).optional().describe("Sort results by this field."),
+    sortOrder: z.enum(["asc", "desc"]).optional().describe("Sort direction. 'desc' for highest/most first."),
+
+    // ── Pagination ──
+    limit: z.number().optional().describe("Max results to return (default 20, max 50). Use higher limits when user wants comprehensive lists."),
+    offset: z.number().optional().describe("Skip this many results. Use with limit for pagination (e.g. 'show me more' → offset: 20)."),
   }),
   execute: async (input) => {
-    let query = supabase.from("courses").select(COURSE_COLUMNS).order("offering_name").order("section_name").limit(20);
+    let query = supabase.from("courses").select(COURSE_COLUMNS);
 
+    // Sort
+    if (input.sortBy) {
+      query = query.order(input.sortBy, { ascending: input.sortOrder === "asc", nullsFirst: false });
+    } else {
+      query = query.order("offering_name").order("section_name");
+    }
+
+    // Pagination
+    const limit = Math.min(input.limit || 20, 50);
+    const offset = input.offset || 0;
+    query = query.range(offset, offset + limit - 1);
+
+    // ── Text search ──
     if (input.titleKeyword) {
-      const words = input.titleKeyword.split(/\s+/).filter((w) => w.length > 0);
-      for (const word of words) {
+      for (const word of input.titleKeyword.split(/\s+/).filter(Boolean)) {
         query = query.ilike("title", `%${word}%`);
       }
     }
+    if (input.descriptionKeyword) {
+      for (const word of input.descriptionKeyword.split(/\s+/).filter(Boolean)) {
+        query = query.ilike("description", `%${word}%`);
+      }
+    }
+    if (input.courseNumber) query = query.ilike("offering_name", `%${input.courseNumber}%`);
+
+    // ── Department / school / level ──
     if (input.department) query = query.ilike("department", `%${input.department}%`);
     if (input.school) query = query.ilike("school_name", `%${input.school}%`);
     if (input.level) query = query.eq("level", input.level);
-    if (input.credits) {
-      // For simplicity, match exact or use ilike for ranges containing the value
-      query = query.or(`credits.eq.${input.credits},credits.ilike.%${input.credits}%`);
-    }
+
+    // ── Instructor ──
     if (input.instructor) {
-      const words = input.instructor.split(/\s+/).filter((w) => w.length > 0);
-      for (const word of words) {
+      for (const word of input.instructor.split(/\s+/).filter(Boolean)) {
         query = query.ilike("instructors_full_name", `%${word}%`);
       }
     }
+
+    // ── Schedule ──
     if (input.daysOfWeek) query = query.ilike("meetings", `${input.daysOfWeek} %`);
     if (input.timeOfDay) query = query.eq("time_of_day", input.timeOfDay);
+
+    // ── Logistics ──
+    if (input.credits) query = query.or(`credits.eq.${input.credits},credits.ilike.%${input.credits}%`);
     if (input.status) query = query.eq("status", input.status);
     if (input.writingIntensive) query = query.eq("is_writing_intensive", "Yes");
     if (input.instructionMethod) {
@@ -68,19 +123,27 @@ export const searchCourses = tool({
       else if (m === "blended") query = query.ilike("instruction_method", "%blended%");
     }
     if (input.areas) query = query.ilike("areas", `%${input.areas}%`);
-    if (input.courseNumber) query = query.ilike("offering_name", `%${input.courseNumber}%`);
-    if (input.descriptionKeyword) {
-      const words = input.descriptionKeyword.split(/\s+/).filter((w) => w.length > 0);
-      for (const word of words) {
-        query = query.ilike("description", `%${word}%`);
-      }
-    }
+    if (input.building) query = query.ilike("building", `%${input.building}%`);
+
+    // ── Seats ──
+    if (input.hasOpenSeats === true) query = query.gt("open_seats", "0");
+    else if (input.hasOpenSeats === false) query = query.eq("open_seats", "0");
+
+    // ── Prerequisites ──
     if (input.hasPrerequisites === true) query = query.neq("prerequisites", "");
     else if (input.hasPrerequisites === false) query = query.or("prerequisites.eq.,prerequisites.is.null");
-    if (input.minOverallQuality) query = query.gte("overall_quality", input.minOverallQuality);
-    if (input.maxWorkload) query = query.lte("workload", input.maxWorkload);
+
+    // ── Evaluation filters ──
     if (input.hasEvaluations === true) query = query.not("overall_quality", "is", null);
     else if (input.hasEvaluations === false) query = query.is("overall_quality", null);
+    if (input.minOverallQuality) query = query.gte("overall_quality", input.minOverallQuality);
+    if (input.maxOverallQuality) query = query.lte("overall_quality", input.maxOverallQuality);
+    if (input.minInstructorEffectiveness) query = query.gte("instructor_effectiveness", input.minInstructorEffectiveness);
+    if (input.minIntellectualChallenge) query = query.gte("intellectual_challenge", input.minIntellectualChallenge);
+    if (input.maxIntellectualChallenge) query = query.lte("intellectual_challenge", input.maxIntellectualChallenge);
+    if (input.minWorkload) query = query.gte("workload", input.minWorkload);
+    if (input.maxWorkload) query = query.lte("workload", input.maxWorkload);
+    if (input.minRespondents) query = query.gte("num_respondents", input.minRespondents);
 
     if (input.prerequisiteKeyword) {
       const keyword = input.prerequisiteKeyword.trim();
@@ -109,8 +172,23 @@ export const searchCourses = tool({
       }
     }
 
-    const { data: rows, error } = await query;
+    const { data: rawRows, error } = await query;
     if (error) return { count: 0, courses: [], error: error.message };
+
+    // Post-filter: credit ranges (can't do in Supabase since credits is TEXT with ranges like "1.00 - 3.00")
+    let rows = rawRows || [];
+    if (input.minCredits || input.maxCredits) {
+      rows = rows.filter((r) => {
+        const c = r.credits || "";
+        const rangeMatch = c.match(/([\d.]+)\s*-\s*([\d.]+)/);
+        const lo = rangeMatch ? parseFloat(rangeMatch[1]) : parseFloat(c);
+        const hi = rangeMatch ? parseFloat(rangeMatch[2]) : lo;
+        if (isNaN(lo)) return false;
+        if (input.minCredits && hi < input.minCredits) return false;
+        if (input.maxCredits && lo > input.maxCredits) return false;
+        return true;
+      });
+    }
 
     // Resolve course codes in prerequisites to include course names
     const codePattern = /[A-Z]{2}\.\d{3}\.\d{3}/g;
@@ -134,21 +212,48 @@ export const searchCourses = tool({
     }
 
     const resolvedRows = (rows || []).map((row) => {
-      if (row.prerequisites && titleMap.size > 0) {
-        const codes = [...new Set(row.prerequisites.match(codePattern) || [])] as string[];
-        let resolved = row.prerequisites;
+      // Resolve prereq codes to names
+      let prereqs = row.prerequisites || "";
+      if (prereqs && titleMap.size > 0) {
+        const codes = [...new Set(prereqs.match(codePattern) || [])] as string[];
         for (const code of codes) {
           const name = titleMap.get(code);
           if (name) {
-            resolved = resolved.replace(
+            prereqs = prereqs.replace(
               new RegExp(code.replace(/\./g, "\\."), "g"),
               `${code} (${name})`
             );
           }
         }
-        return { ...row, prerequisites: resolved };
       }
-      return row;
+
+      // Return trimmed result to keep tool output small for the model
+      return {
+        offering_name: row.offering_name,
+        section_name: row.section_name,
+        title: row.title,
+        credits: row.credits,
+        department: row.department,
+        level: row.level,
+        status: row.status,
+        meetings: row.meetings,
+        building: row.building,
+        instructors_full_name: row.instructors_full_name,
+        instruction_method: row.instruction_method,
+        is_writing_intensive: row.is_writing_intensive,
+        areas: row.areas || undefined,
+        open_seats: row.open_seats,
+        // Truncate long text fields
+        description: row.description ? row.description.slice(0, 200) + (row.description.length > 200 ? "..." : "") : undefined,
+        prerequisites: prereqs || undefined,
+        // Eval data
+        overall_quality: row.overall_quality,
+        instructor_effectiveness: row.instructor_effectiveness,
+        intellectual_challenge: row.intellectual_challenge,
+        workload: row.workload,
+        num_evaluations: row.num_evaluations,
+        num_respondents: row.num_respondents,
+      };
     });
 
     return { count: resolvedRows.length, courses: resolvedRows };

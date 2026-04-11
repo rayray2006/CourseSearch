@@ -129,7 +129,12 @@ function md(text: string): string {
 const COURSE_CODE_RE = /[A-Z]{2}\.\d{3}\.\d{3}/g;
 const SECTION_RE = /Section\s+(\d{2})/g;
 
-function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, section: string) => void }) {
+function MessageContent({ html, onAdd, onPreview, onPreviewEnd }: {
+  html: string;
+  onAdd: (code: string, section: string) => void;
+  onPreview: (code: string, section: string) => void;
+  onPreviewEnd: () => void;
+}) {
   // Combined regex: match either a course code or a "Section NN" pattern
   const TOKEN_RE = /([A-Z]{2}\.\d{3}\.\d{3})|Section\s+(\d{2})/g;
   const parts: { type: "html" | "code" | "section"; text: string; value?: string }[] = [];
@@ -185,6 +190,8 @@ function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, s
   const addBtn = (code: string, section: string) => (
     <button
       onClick={(e) => { e.stopPropagation(); onAdd(code, section); }}
+      onMouseEnter={() => onPreview(code, section)}
+      onMouseLeave={onPreviewEnd}
       className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100 text-emerald-600 hover:bg-emerald-200 text-[9px] font-bold leading-none transition-colors flex-shrink-0 align-middle ml-0.5"
       title={`Add ${code} section ${section}`}
     >+</button>
@@ -249,6 +256,29 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [schedule, setSchedule] = useState<ScheduledCourse[]>([]);
   const [selected, setSelected] = useState<ScheduledCourse | null>(null);
+  const [previewCourse, setPreviewCourse] = useState<ScheduledCourse | null>(null);
+
+  // Cache fetched course data for preview hover
+  const previewCache = useRef(new Map<string, ScheduledCourse | null>());
+  const handlePreview = useCallback(async (code: string, section: string) => {
+    const key = `${code}::${section}`;
+    if (previewCache.current.has(key)) {
+      setPreviewCourse(previewCache.current.get(key) || null);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/course-detail?code=${encodeURIComponent(code)}&section=${encodeURIComponent(section)}&full=1`);
+      if (!res.ok) { setPreviewCourse(null); return; }
+      const data = await res.json();
+      if (data?.offering_name) {
+        previewCache.current.set(key, data);
+        setPreviewCourse(data);
+      }
+    } catch {
+      setPreviewCourse(null);
+    }
+  }, []);
+  const clearPreview = useCallback(() => setPreviewCourse(null), []);
   interface ProfRatingResult {
     name: string;
     rating: {
@@ -315,46 +345,94 @@ export default function Home() {
     };
   }, [selected]);
 
-  // Fetch professor ratings and course detail when a course is selected
+  // Fetch professor ratings and course detail when a course is selected.
+  // Keep old data visible until new data is ready (no flash).
+  const [panelReady, setPanelReady] = useState(false);
   useEffect(() => {
-    if (!selected) { setProfRatings(null); setCourseDetail(null); return; }
-    // Professor ratings
-    const name = selected.instructors_full_name;
-    if (!name || name === "Staff") { setProfRatings([]); } else {
-      setProfRatings("loading");
-      fetch(`/api/professor?name=${encodeURIComponent(name)}`)
-        .then((r) => r.json())
-        .then((data: ProfRatingResult[]) => setProfRatings(data))
-        .catch(() => setProfRatings([]));
+    if (!selected) {
+      setProfRatings(null);
+      setCourseDetail(null);
+      setPanelReady(false);
+      return;
     }
-    // Course detail (description, prereqs, evals)
-    setCourseDetail("loading");
-    fetch(`/api/course-detail?code=${encodeURIComponent(selected.offering_name)}`)
+
+    let cancelled = false;
+    setPanelReady(false);
+
+    const profPromise: Promise<ProfRatingResult[]> = (() => {
+      const name = selected.instructors_full_name;
+      if (!name || name === "Staff") return Promise.resolve([]);
+      return fetch(`/api/professor?name=${encodeURIComponent(name)}`)
+        .then((r) => r.json())
+        .catch(() => []);
+    })();
+
+    const detailPromise: Promise<CourseDetail | null> = fetch(
+      `/api/course-detail?code=${encodeURIComponent(selected.offering_name)}`
+    )
       .then((r) => r.json())
-      .then((data: CourseDetail | null) => setCourseDetail(data || null))
-      .catch(() => setCourseDetail(null));
+      .then((data: CourseDetail | null) => data || null)
+      .catch(() => null);
+
+    Promise.all([profPromise, detailPromise]).then(([prof, detail]) => {
+      if (cancelled) return;
+      setProfRatings(prof);
+      setCourseDetail(detail);
+      setPanelReady(true);
+    });
+
+    return () => { cancelled = true; };
   }, [selected]);
 
   const isActive = status === "submitted" || status === "streaming";
 
-  // Show loading state if actively processing OR if the last assistant message
-  // has no visible text yet (covers brief "ready" gaps between tool loop rounds)
+  // Auto-retry logic: detect silent failures and resend seamlessly.
+  const retryCount = useRef(0);
+  const retrying = useRef(false);
+
+  // When status settles to "ready", check if we got a response. If not, retry.
+  useEffect(() => {
+    if (status !== "ready") return;
+
+    const t = setTimeout(() => {
+      const last = messages[messages.length - 1];
+      if (!last) return;
+      const hasText = last.role === "assistant" &&
+        last.parts.some((p) => p.type === "text" && p.text.trim());
+      if (hasText) { retryCount.current = 0; retrying.current = false; return; }
+      if (retryCount.current >= 2) { retryCount.current = 0; retrying.current = false; return; }
+
+      const lastUser = [...messages].reverse().find((m) => m.role === "user");
+      const text = lastUser?.parts.find((p) => p.type === "text");
+      if (text && text.type === "text") {
+        retrying.current = true;
+        retryCount.current++;
+        sendMessage({ text: text.text });
+      }
+    }, 1500);
+
+    return () => clearTimeout(t);
+  }, [status, messages, sendMessage]);
+
   const lastMsg = messages[messages.length - 1];
   const lastAssistantHasText = lastMsg?.role === "assistant" &&
     lastMsg.parts.some((p) => p.type === "text" && p.text.trim());
-  const isLoading = isActive || (lastMsg?.role === "assistant" && !lastAssistantHasText);
+  // Always show loading if: actively processing, OR last message has no text yet and we're not done
+  const isLoading = isActive || (
+    messages.length > 0 &&
+    !lastAssistantHasText &&
+    !error
+  );
 
-  // Color assignment
+  // Stable color assignment: hash the course key so colors don't shift on removal
   const colorOf = useCallback(
     (c: ScheduledCourse) => {
-      const idx = schedule.findIndex(
-        (s) =>
-          s.offering_name === c.offering_name &&
-          s.section_name === c.section_name
-      );
-      return PALETTE[idx % PALETTE.length];
+      const key = `${c.offering_name}::${c.section_name}`;
+      let hash = 0;
+      for (let i = 0; i < key.length; i++) hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+      return PALETTE[Math.abs(hash) % PALETTE.length];
     },
-    [schedule]
+    []
   );
 
   const totalCredits = schedule.reduce((sum, c) => {
@@ -368,8 +446,9 @@ export default function Home() {
     dayIdx: number;
     top: number;
     height: number;
+    isPreview?: boolean;
   }[] = [];
-  schedule.forEach((course) => {
+  const addBlocks = (course: ScheduledCourse, isPreview = false) => {
     const mbs = parseMeetings(course.meetings);
     mbs.forEach((mb) => {
       mb.days.forEach((dayIdx) => {
@@ -378,13 +457,14 @@ export default function Home() {
           course,
           dayIdx,
           top: (mb.startHour - 8) * ROW_H + (mb.startMin / 60) * ROW_H,
-          height:
-            (mb.endHour - mb.startHour) * ROW_H +
-            ((mb.endMin - mb.startMin) / 60) * ROW_H,
+          height: (mb.endHour - mb.startHour) * ROW_H + ((mb.endMin - mb.startMin) / 60) * ROW_H,
+          isPreview,
         });
       });
     });
-  });
+  };
+  schedule.forEach((c) => addBlocks(c));
+  if (previewCourse) addBlocks(previewCourse, true);
 
   return (
     <div className="flex h-full">
@@ -499,6 +579,33 @@ export default function Home() {
                   const total = siblings.length;
                   const pal = colorOf(block.course);
 
+                  if (block.isPreview) {
+                    return (
+                      <div
+                        key={`preview-${block.dayIdx}-${block.top}`}
+                        className="absolute rounded-lg overflow-hidden pointer-events-none"
+                        style={{
+                          top: block.top,
+                          height: block.height,
+                          left: `calc(52px + ${block.dayIdx} * ((100% - 52px) / 5) + 3px + ${idx} * ((100% - 52px) / 5 - 6px) / ${total})`,
+                          width: `calc(((100% - 52px) / 5 - 6px) / ${total})`,
+                          background: "rgba(16, 185, 129, 0.12)",
+                          border: "2px dashed rgba(16, 185, 129, 0.5)",
+                          zIndex: 15,
+                        }}
+                      >
+                        <div className="px-2 py-1.5">
+                          <span className="text-[10px] font-bold text-emerald-700 leading-none truncate block">
+                            {block.course.offering_name}
+                          </span>
+                          <span className="text-[10px] text-emerald-600 leading-snug truncate block mt-0.5 opacity-80">
+                            {block.course.title}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div
                       key={`${block.course.offering_name}-${block.course.section_name}-${block.dayIdx}-${block.top}`}
@@ -549,7 +656,7 @@ export default function Home() {
           )}
 
           {/* Course detail panel */}
-          {selected && (
+          {selected && panelReady && (
             <div
               ref={panelRef}
               className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] z-20 max-h-[55%] flex flex-col"
@@ -785,15 +892,20 @@ export default function Home() {
             </div>
           )}
 
-          {messages.map((message) => {
+          {messages.map((message, msgIdx) => {
             // Hide assistant messages that have no visible content (only hidden tool parts)
             if (message.role === "assistant") {
-              const hasVisible = message.parts.some((p) => {
-                if (p.type === "text" && p.text.trim()) return true;
-                if (isToolUIPart(p) && p.state !== "output-available") return true;
-                return false;
-              });
+              const hasVisible = message.parts.some((p) => p.type === "text" && p.text.trim());
               if (!hasVisible) return null;
+            }
+            // Hide duplicate user messages created by auto-retry
+            if (retrying.current && message.role === "user" && msgIdx > 0) {
+              const prevUsers = messages.slice(0, msgIdx).filter((m) => m.role === "user");
+              const thisText = message.parts.find((p) => p.type === "text");
+              if (thisText && thisText.type === "text" && prevUsers.some((m) => {
+                const t = m.parts.find((p) => p.type === "text");
+                return t && t.type === "text" && t.text === thisText.text;
+              })) return null;
             }
             return (
             <div
@@ -832,23 +944,16 @@ export default function Home() {
                               body: JSON.stringify({ offering_name: code, section_name: section }),
                             });
                             fetchSchedule();
+                            clearPreview();
                           }}
+                          onPreview={handlePreview}
+                          onPreviewEnd={clearPreview}
                         />
                       </div>
                     );
                   }
                   if (isToolUIPart(part)) {
-                    // Only show indicator while actively running, not after completion
-                    if (part.state === "output-available") return null;
-                    return (
-                      <div
-                        key={i}
-                        className="flex items-center gap-1.5 text-[11px] text-slate-400 py-0.5"
-                      >
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                        Searching...
-                      </div>
-                    );
+                    return null;
                   }
                   return null;
                 })}
@@ -861,7 +966,6 @@ export default function Home() {
             const last = messages[messages.length - 1];
             if (!last) return false;
             if (last.role === "user") return true;
-            // Show dots if assistant message has no visible text yet (only tool calls)
             const hasText = last.parts.some((p) => p.type === "text" && p.text.trim());
             return !hasText;
           })() && (

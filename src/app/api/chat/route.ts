@@ -14,8 +14,17 @@ export async function POST(req: Request) {
   if (!sessionId) sessionId = "default";
   setSessionId(sessionId);
 
-  return createAgentUIStreamResponse({
-    agent: courseAgent,
-    uiMessages: messages,
-  });
+  try {
+    return createAgentUIStreamResponse({
+      agent: courseAgent,
+      uiMessages: messages,
+      onError: (error) => {
+        console.error("[chat agent error]", error);
+        return String(error);
+      },
+    });
+  } catch (e) {
+    console.error("[chat route error]", e);
+    return new Response(JSON.stringify({ error: "Agent failed" }), { status: 500 });
+  }
 }

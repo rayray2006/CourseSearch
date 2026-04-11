@@ -23,7 +23,8 @@ export const searchProfessors = tool({
       .limit(15);
 
     if (input.name) {
-      const words = input.name.split(/\s+/).filter((w) => w.length > 0);
+      // Strip punctuation and split into words for flexible matching
+      const words = input.name.replace(/[,;.:]/g, " ").split(/\s+/).filter((w) => w.length > 1);
       for (const word of words) {
         query = query.or(`first_name.ilike.%${word}%,last_name.ilike.%${word}%`);
       }
