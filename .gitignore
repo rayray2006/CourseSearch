@@ -44,3 +44,4 @@ courses.db-shm
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+supabase/.temp/

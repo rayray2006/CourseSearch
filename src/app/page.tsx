@@ -103,14 +103,14 @@ function md(text: string): string {
     if (subBullet) {
       if (!inList) { inList = true; listLevel = 1; }
       listLevel = 1;
-      out.push(`<div style="padding-left:16px;margin-top:1px;display:flex;align-items:baseline;gap:6px"><span style="color:#cbd5e1;flex-shrink:0">·</span><span>${subBullet[1]}</span></div>`);
+      out.push(`<div style="padding-left:12px;margin-top:1px">${subBullet[1]}</div>`);
     } else if (topBullet) {
       if (inList) {
-        out.push('<div style="margin-top:8px"></div>');
+        out.push('<div style="margin-top:10px"></div>');
       }
       inList = true;
       listLevel = 0;
-      out.push(`<div style="display:flex;align-items:baseline;gap:6px"><span style="color:#94a3b8;flex-shrink:0">•</span><span>${topBullet[1]}</span></div>`);
+      out.push(`<div>${topBullet[1]}</div>`);
     } else {
       if (inList) { inList = false; listLevel = 0; }
       line = line.replace(/\*(.*?)\*/g, "<em>$1</em>");
@@ -197,30 +197,12 @@ function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, s
           return <span key={i} dangerouslySetInnerHTML={{ __html: p.text }} />;
         }
         if (p.type === "code") {
-          const sectionCount = codeSectionCount.get(i) || 0;
-          if (sectionCount <= 1) {
-            // No sections listed, or only one — show add button on the course code
-            const section = codeFirstSection.get(i) || "01";
-            return <strong key={i}>{p.text}{addBtn(p.value!, section)}</strong>;
-          }
-          // Multiple sections — buttons go on each section line
           return <strong key={i}>{p.text}</strong>;
         }
         if (p.type === "section") {
           const courseCode = sectionCourseMap.get(i) || "";
           if (!courseCode) return <span key={i}>{p.text}</span>;
-          // Find the parent code index to check section count
-          let parentIdx = -1;
-          for (let j = i - 1; j >= 0; j--) {
-            if (parts[j].type === "code") { parentIdx = j; break; }
-          }
-          const sectionCount = parentIdx >= 0 ? (codeSectionCount.get(parentIdx) || 0) : 0;
-          if (sectionCount > 1) {
-            // Multiple sections — show button on each section
-            return <span key={i}>{p.text}{addBtn(courseCode, p.value!)}</span>;
-          }
-          // Single section — button is already on the course code
-          return <span key={i}>{p.text}</span>;
+          return <span key={i}>{p.text}{addBtn(courseCode, p.value!)}</span>;
         }
         return <span key={i}>{p.text}</span>;
       })}
@@ -253,9 +235,17 @@ function splitPrerequisites(raw: string): { restrictions: string[]; prereqs: str
 // ===================== COMPONENT =====================
 
 export default function Home() {
-  const { messages, sendMessage, status } = useChat<CourseAgentUIMessage>({
+  const { messages, sendMessage, status, error } = useChat<CourseAgentUIMessage>({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
   });
+
+  // Debug: log status transitions and errors
+  useEffect(() => {
+    if (error) console.error("[chat error]", error);
+  }, [error]);
+  useEffect(() => {
+    console.log("[chat status]", status, "messages:", messages.length, "last role:", messages[messages.length - 1]?.role);
+  }, [status, messages]);
   const [input, setInput] = useState("");
   const [schedule, setSchedule] = useState<ScheduledCourse[]>([]);
   const [selected, setSelected] = useState<ScheduledCourse | null>(null);
@@ -305,17 +295,19 @@ export default function Home() {
     fetchSchedule();
   }, [fetchSchedule]);
 
-  // Click outside to dismiss detail panel
+  // Click outside to dismiss detail panel (but not when clicking another course block)
   useEffect(() => {
     if (!selected) return;
     function handleClick(e: MouseEvent) {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        // Don't close if clicking on another course block — let its onClick handle the swap
+        const target = e.target as HTMLElement;
+        if (target.closest("[data-course-block]")) return;
         setSelected(null);
         setProfRatings(null);
         setCourseDetail(null);
       }
     }
-    // Delay to avoid the click that opened the panel from immediately closing it
     const id = setTimeout(() => document.addEventListener("mousedown", handleClick), 0);
     return () => {
       clearTimeout(id);
@@ -510,6 +502,7 @@ export default function Home() {
                   return (
                     <div
                       key={`${block.course.offering_name}-${block.course.section_name}-${block.dayIdx}-${block.top}`}
+                      data-course-block
                       className="absolute rounded-lg overflow-hidden group cursor-pointer transition-shadow hover:shadow-md"
                       style={{
                         top: block.top,
