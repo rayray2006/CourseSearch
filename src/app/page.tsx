@@ -103,6 +103,7 @@ export default function Home() {
   });
   const [input, setInput] = useState("");
   const [schedule, setSchedule] = useState<ScheduledCourse[]>([]);
+  const [selected, setSelected] = useState<ScheduledCourse | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const fetchSchedule = useCallback(async () => {
@@ -200,7 +201,7 @@ export default function Home() {
         </div>
 
         {/* Grid area */}
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-auto relative">
           {schedule.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center space-y-2 max-w-xs">
@@ -282,7 +283,7 @@ export default function Home() {
                   return (
                     <div
                       key={`${block.course.offering_name}-${block.course.section_name}-${block.dayIdx}-${block.top}`}
-                      className="absolute rounded-lg overflow-hidden group cursor-default transition-shadow hover:shadow-md"
+                      className="absolute rounded-lg overflow-hidden group cursor-pointer transition-shadow hover:shadow-md"
                       style={{
                         top: block.top,
                         height: block.height,
@@ -292,13 +293,18 @@ export default function Home() {
                         borderLeft: `3px solid ${pal.border}`,
                         color: pal.text,
                       }}
+                      onClick={() => setSelected(block.course)}
                     >
                       <button
-                        onClick={() =>
+                        onClick={(e) => {
+                          e.stopPropagation();
                           sendMessage({
                             text: `Remove ${block.course.offering_name} section ${block.course.section_name} from my schedule`,
-                          })
-                        }
+                          });
+                          if (selected?.offering_name === block.course.offering_name && selected?.section_name === block.course.section_name) {
+                            setSelected(null);
+                          }
+                        }}
                         className="absolute top-1 right-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:bg-black/10 transition-all"
                         title="Remove"
                       >
@@ -315,6 +321,103 @@ export default function Home() {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {/* Course detail panel */}
+          {selected && (
+            <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] z-20 animate-in slide-in-from-bottom">
+              <div className="px-5 py-4 max-w-2xl">
+                {/* Header row */}
+                <div className="flex items-start justify-between gap-4 mb-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-mono font-medium text-slate-400">
+                        {selected.offering_name}
+                      </span>
+                      <span className="text-[11px] text-slate-300">
+                        Section {selected.section_name}
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-semibold text-slate-900 mt-0.5">
+                      {selected.title}
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setSelected(null)}
+                    className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors text-xs"
+                  >
+                    &#10005;
+                  </button>
+                </div>
+
+                {/* Info grid */}
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[12px]">
+                  <div>
+                    <span className="text-slate-400">Credits</span>
+                    <p className="text-slate-700 font-medium">{selected.credits}</p>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Instructor</span>
+                    <p className="text-slate-700 font-medium">{selected.instructors_full_name || "Staff"}</p>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Schedule</span>
+                    <p className="text-slate-700 font-medium">{selected.meetings || "TBA"}</p>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Location</span>
+                    <p className="text-slate-700 font-medium">
+                      {[selected.building, selected.location].filter(Boolean).join(", ") || "TBA"}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Department</span>
+                    <p className="text-slate-700 font-medium">{selected.department}</p>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Format</span>
+                    <p className="text-slate-700 font-medium">{selected.instruction_method || "N/A"}</p>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="mt-3 pt-3 border-t border-slate-100 flex gap-2">
+                  <button
+                    onClick={() => {
+                      sendMessage({
+                        text: `Tell me more about ${selected.offering_name}, including description and prerequisites`,
+                      });
+                      setSelected(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                  >
+                    More details
+                  </button>
+                  <button
+                    onClick={() => {
+                      sendMessage({
+                        text: `What is the RMP rating for ${selected.instructors_full_name}?`,
+                      });
+                      setSelected(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                  >
+                    Professor rating
+                  </button>
+                  <button
+                    onClick={() => {
+                      sendMessage({
+                        text: `Remove ${selected.offering_name} section ${selected.section_name} from my schedule`,
+                      });
+                      setSelected(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                  >
+                    Remove from schedule
+                  </button>
+                </div>
               </div>
             </div>
           )}
