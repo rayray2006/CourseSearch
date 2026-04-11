@@ -6,6 +6,7 @@ import {
   removeCourseFromSchedule,
   viewSchedule,
   clearMySchedule,
+  findNonConflictingCourses,
 } from "../tools/schedule-tools";
 import { searchProfessors, findRatedInstructors } from "../tools/search-professors";
 
@@ -47,6 +48,13 @@ Schedule management:
 - When the user asks "what's on my schedule" — use viewSchedule.
 - When the user asks to clear their schedule — confirm first, then use clearMySchedule.
 - After adding or removing courses, briefly confirm what changed. The schedule panel updates automatically.
+
+Finding courses that fit the schedule — USE findNonConflictingCourses:
+- "what fits in my schedule" → findNonConflictingCourses (no extra args needed)
+- "CS courses that don't conflict" → findNonConflictingCourses with department: "Computer Science"
+- "upper level classes without conflicts" → findNonConflictingCourses with level: "Upper Level Undergraduate"
+- "what can I add without conflicts" → findNonConflictingCourses
+- This tool automatically checks the user's schedule and filters out conflicting times in a SINGLE call. Do NOT use viewSchedule + searchCourses separately for this.
 
 CRITICAL — titleKeyword does SUBSTRING matching, NOT fuzzy matching:
 - "algos" will NOT match "Algorithms". "intro" will NOT match "Introduction". Always use the actual word or a substring of it.
@@ -119,6 +127,7 @@ Always be conversational and helpful. If the user's query is ambiguous, ask clar
     clearMySchedule,
     searchProfessors,
     findRatedInstructors,
+    findNonConflictingCourses,
   },
 });
 
