@@ -1,13 +1,13 @@
 import { ToolLoopAgent, InferAgentUIMessage } from "ai";
 import { google } from "@ai-sdk/google";
 import { searchCourses, getCourseStats } from "../tools/search-courses";
-import { searchEvaluations } from "../tools/search-evaluations";
 import {
   addCourseToSchedule,
   removeCourseFromSchedule,
   viewSchedule,
   clearMySchedule,
 } from "../tools/schedule-tools";
+import { searchProfessors } from "../tools/search-professors";
 
 export const courseAgent = new ToolLoopAgent({
   model: google("gemini-2.5-flash"),
@@ -55,12 +55,22 @@ Tips for translating queries:
 When showing course details, include the description and prerequisites if available.
 
 Course evaluations:
-- Use searchEvaluations when users ask about ratings, difficulty, workload, best/worst courses, or want to compare courses.
+- searchCourses now returns evaluation data directly: overall_quality, instructor_effectiveness, intellectual_challenge, workload, feedback_usefulness, num_evaluations.
 - Ratings are on a 1-5 scale: overall_quality (1=poor, 5=excellent), instructor_effectiveness (1=poor, 5=excellent), intellectual_challenge (1=poor, 5=excellent), workload (1=much lighter, 3=typical, 5=much heavier), feedback_usefulness (1=disagree strongly, 5=agree strongly).
-- When a user asks "is this course hard?" or "what's the workload like?" — use searchEvaluations with the course code.
-- When a user asks "best CS courses" — use searchEvaluations with department filter and sort by overall_quality desc.
-- You can combine course search + evaluations: first find courses, then look up their ratings.
-- Evaluation data spans multiple semesters. Show the aggregate averages when available.
+- Use minOverallQuality to find highly-rated courses (e.g. "best courses" → minOverallQuality: 4.5).
+- Use maxWorkload to find lighter courses (e.g. "easy courses" → maxWorkload: 2.5).
+- Use hasEvaluations: true to only show courses with rating data.
+- "is this course hard?" → search for it and show workload + intellectual_challenge.
+- "best CS courses" → search department "Computer Science" with hasEvaluations: true, then highlight top-rated.
+- null evaluation fields mean no evaluation data is available for that course.
+
+Professor ratings (RateMyProfessors):
+- Use searchProfessors when users ask about a professor's ratings, reputation, difficulty, or want to compare professors.
+- Data includes: avg_rating (1-5, higher=better), avg_difficulty (1-5, higher=harder), num_ratings, would_take_again_pct (percentage, -1 means no data).
+- "Who is the best rated CS professor?" → searchProfessors with department "Computer Science", sortBy "rating_desc".
+- "Is professor X hard?" → searchProfessors with their name, show avg_difficulty.
+- "Tell me about professor X" → searchProfessors with name, show all fields.
+- You can combine: search courses first to find the instructor, then look up their RMP rating.
 
 Always be conversational and helpful. If the user's query is ambiguous, ask clarifying questions.`,
   tools: {
@@ -70,7 +80,7 @@ Always be conversational and helpful. If the user's query is ambiguous, ask clar
     removeCourseFromSchedule,
     viewSchedule,
     clearMySchedule,
-    searchEvaluations,
+    searchProfessors,
   },
 });
 

@@ -8,11 +8,14 @@
     "start": "next start",
     "lint": "eslint",
     "ingest": "npx tsx --env-file=.env.local scripts/ingest.ts",
-    "ingest:descriptions": "npx tsx scripts/ingest-descriptions.ts"
+    "ingest:descriptions": "npx tsx scripts/ingest-descriptions.ts",
+    "ingest:evaluations": "npx tsx scripts/ingest-evaluations.ts",
+    "ingest:rmp": "npx tsx scripts/ingest-rmp.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.61",
     "@ai-sdk/react": "^3.0.160",
+    "@mtucourses/rate-my-professors": "^2.2.1",
     "ai": "^6.0.158",
     "better-sqlite3": "^12.8.0",
     "cheerio": "^1.2.0",

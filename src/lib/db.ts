@@ -42,6 +42,13 @@ export function initDb() {
       repeatable TEXT,
       term TEXT,
       term_start_date TEXT,
+      overall_quality REAL,
+      instructor_effectiveness REAL,
+      intellectual_challenge REAL,
+      workload REAL,
+      feedback_usefulness REAL,
+      num_evaluations INTEGER DEFAULT 0,
+      num_respondents INTEGER DEFAULT 0,
       UNIQUE(offering_name, section_name, term)
     );
 
@@ -52,6 +59,43 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_courses_level ON courses(level);
     CREATE INDEX IF NOT EXISTS idx_courses_meetings ON courses(meetings);
     CREATE INDEX IF NOT EXISTS idx_courses_instructors ON courses(instructors_full_name);
+
+    CREATE TABLE IF NOT EXISTS evaluations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      course_code TEXT NOT NULL,
+      instance_key TEXT NOT NULL UNIQUE,
+      course_name TEXT DEFAULT '',
+      instructor TEXT DEFAULT '',
+      term TEXT DEFAULT '',
+      term_label TEXT DEFAULT '',
+      overall_quality REAL,
+      instructor_effectiveness REAL,
+      intellectual_challenge REAL,
+      workload REAL,
+      feedback_usefulness REAL,
+      num_respondents INTEGER DEFAULT 0,
+      num_enrolled INTEGER DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eval_course ON evaluations(course_code);
+    CREATE INDEX IF NOT EXISTS idx_eval_instructor ON evaluations(instructor);
+
+    CREATE TABLE IF NOT EXISTS professors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      department TEXT,
+      avg_rating REAL,
+      avg_difficulty REAL,
+      num_ratings INTEGER DEFAULT 0,
+      would_take_again_pct REAL,
+      rmp_id TEXT,
+      UNIQUE(first_name, last_name, department)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_prof_last_name ON professors(last_name);
+    CREATE INDEX IF NOT EXISTS idx_prof_department ON professors(department);
+    CREATE INDEX IF NOT EXISTS idx_prof_rating ON professors(avg_rating);
   `);
   return db;
 }

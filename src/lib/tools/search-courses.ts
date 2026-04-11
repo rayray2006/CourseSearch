@@ -80,6 +80,18 @@ export const searchCourses = tool({
       .string()
       .optional()
       .describe("Course number or partial, e.g. 'EN.601' or '601.226'"),
+    minOverallQuality: z
+      .number()
+      .optional()
+      .describe("Minimum overall quality rating (1-5). Filters to courses with evaluation data."),
+    maxWorkload: z
+      .number()
+      .optional()
+      .describe("Maximum workload rating (1-5, where 1=much lighter, 3=typical, 5=much heavier)."),
+    hasEvaluations: z
+      .boolean()
+      .optional()
+      .describe("If true, only return courses that have evaluation data. If false, only courses without."),
     descriptionKeyword: z
       .string()
       .optional()
@@ -238,6 +250,20 @@ export const searchCourses = tool({
       }
     }
 
+    if (input.minOverallQuality) {
+      conditions.push("overall_quality >= @minOverallQuality");
+      params.minOverallQuality = String(input.minOverallQuality);
+    }
+    if (input.maxWorkload) {
+      conditions.push("workload <= @maxWorkload");
+      params.maxWorkload = String(input.maxWorkload);
+    }
+    if (input.hasEvaluations === true) {
+      conditions.push("overall_quality IS NOT NULL");
+    } else if (input.hasEvaluations === false) {
+      conditions.push("overall_quality IS NULL");
+    }
+
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -246,7 +272,9 @@ export const searchCourses = tool({
              level, status, meetings, location, building, instruction_method,
              instructors_full_name, max_seats, open_seats, waitlisted,
              is_writing_intensive, areas, time_of_day, description, prerequisites,
-             corequisites, restrictions
+             corequisites, restrictions,
+             overall_quality, instructor_effectiveness, intellectual_challenge,
+             workload, feedback_usefulness, num_evaluations, num_respondents
       FROM courses
       ${where}
       ORDER BY offering_name, section_name
