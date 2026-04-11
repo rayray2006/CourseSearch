@@ -95,26 +95,27 @@ function md(text: string): string {
     .replace(/\n/g, "<br/>");
 }
 
-// Course code pattern: XX.NNN.NNN with optional section .NN
-const COURSE_CODE_RE = /([A-Z]{2}\.\d{3}\.\d{3})(?:\s*(?:[-–—]\s*)?(?:Section\s+)?(\d{2}))?/g;
+// Match course codes and section lines separately
+const COURSE_CODE_RE = /[A-Z]{2}\.\d{3}\.\d{3}/g;
+const SECTION_RE = /Section\s+(\d{2})/g;
 
 function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, section: string) => void }) {
-  // Split HTML by course code patterns, interleave add buttons
-  const parts: { type: "html" | "course"; text: string; code?: string; section?: string }[] = [];
+  // Combined regex: match either a course code or a "Section NN" pattern
+  const TOKEN_RE = /([A-Z]{2}\.\d{3}\.\d{3})|Section\s+(\d{2})/g;
+  const parts: { type: "html" | "code" | "section"; text: string; value?: string }[] = [];
   let lastIdx = 0;
 
-  // Work on the HTML string to find course codes
-  // We need to be careful not to match inside HTML tags
-  const matches = [...html.matchAll(COURSE_CODE_RE)];
+  const matches = [...html.matchAll(TOKEN_RE)];
   for (const match of matches) {
     const idx = match.index!;
     if (idx > lastIdx) parts.push({ type: "html", text: html.slice(lastIdx, idx) });
-    parts.push({
-      type: "course",
-      text: match[0],
-      code: match[1],
-      section: match[2] || "01",
-    });
+    if (match[1]) {
+      // Course code like EN.601.230
+      parts.push({ type: "code", text: match[0], value: match[1] });
+    } else if (match[2]) {
+      // Section NN
+      parts.push({ type: "section", text: match[0], value: match[2] });
+    }
     lastIdx = idx + match[0].length;
   }
   if (lastIdx < html.length) parts.push({ type: "html", text: html.slice(lastIdx) });
@@ -123,24 +124,42 @@ function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, s
     return <span dangerouslySetInnerHTML={{ __html: html }} />;
   }
 
+  // Track the most recent course code so section buttons know what course they belong to
+  let lastCode = "";
+  // Count how many sections follow each course code to decide whether to show button on the code itself
+  const codeSectionCounts = new Map<number, number>();
+  let lastCodeIdx = -1;
+  for (const p of parts) {
+    if (p.type === "code") { lastCodeIdx = parts.indexOf(p); codeSectionCounts.set(lastCodeIdx, 0); }
+    if (p.type === "section" && lastCodeIdx >= 0) codeSectionCounts.set(lastCodeIdx, (codeSectionCounts.get(lastCodeIdx) || 0) + 1);
+  }
+
   return (
     <span>
-      {parts.map((p, i) =>
-        p.type === "html" ? (
-          <span key={i} dangerouslySetInnerHTML={{ __html: p.text }} />
-        ) : (
-          <span key={i} className="inline-flex items-center gap-0.5">
-            <span dangerouslySetInnerHTML={{ __html: p.text }} />
-            <button
-              onClick={(e) => { e.stopPropagation(); onAdd(p.code!, p.section!); }}
-              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100 text-emerald-600 hover:bg-emerald-200 text-[9px] font-bold leading-none transition-colors flex-shrink-0 align-middle"
-              title={`Add ${p.code} section ${p.section}`}
-            >
-              +
-            </button>
-          </span>
-        )
-      )}
+      {parts.map((p, i) => {
+        if (p.type === "html") {
+          return <span key={i} dangerouslySetInnerHTML={{ __html: p.text }} />;
+        }
+        if (p.type === "code") {
+          lastCode = p.value!;
+          const hasSections = (codeSectionCounts.get(i) || 0) > 0;
+          // Only show add button on section lines, not on the course code itself
+          return <span key={i}>{p.text}</span>;
+        }
+        if (p.type === "section" && lastCode) {
+          return (
+            <span key={i}>
+              {p.text}
+              <button
+                onClick={(e) => { e.stopPropagation(); onAdd(lastCode, p.value!); }}
+                className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100 text-emerald-600 hover:bg-emerald-200 text-[9px] font-bold leading-none transition-colors flex-shrink-0 align-middle ml-0.5"
+                title={`Add ${lastCode} section ${p.value}`}
+              >+</button>
+            </span>
+          );
+        }
+        return <span key={i}>{p.text}</span>;
+      })}
     </span>
   );
 }
@@ -491,7 +510,7 @@ export default function Home() {
 
                 {/* Two-column layout */}
                 <div className="grid grid-cols-[1fr_1fr] gap-5">
-                  {/* Left: info + description + prereqs */}
+                  {/* Left: course info + evals + professor ratings */}
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
                       <div>
@@ -518,29 +537,6 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {courseDetail === "loading" && (
-                      <p className="text-[11px] text-slate-400">Loading details...</p>
-                    )}
-                    {courseDetail && courseDetail !== "loading" && courseDetail.description && (
-                      <div>
-                        <span className="text-[11px] text-slate-400">Description</span>
-                        <p className="text-[12px] text-slate-600 leading-relaxed mt-0.5">
-                          {courseDetail.description}
-                        </p>
-                      </div>
-                    )}
-                    {courseDetail && courseDetail !== "loading" && courseDetail.prerequisites && (
-                      <div>
-                        <span className="text-[11px] text-slate-400">Prerequisites</span>
-                        <p className="text-[12px] text-slate-600 leading-relaxed mt-0.5">
-                          {courseDetail.prerequisites}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Right: evaluations + professor ratings */}
-                  <div className="space-y-3">
                     {/* Course evaluations */}
                     <div>
                       <span className="text-[11px] text-slate-400">Course Evaluations</span>
@@ -614,6 +610,32 @@ export default function Home() {
                         ))}
                       </div>
                     </div>
+                  </div>
+
+                  {/* Right: description + prerequisites */}
+                  <div className="space-y-3">
+                    {courseDetail === "loading" && (
+                      <p className="text-[11px] text-slate-400">Loading details...</p>
+                    )}
+                    {courseDetail && courseDetail !== "loading" && courseDetail.description && (
+                      <div>
+                        <span className="text-[11px] text-slate-400">Description</span>
+                        <p className="text-[12px] text-slate-600 leading-relaxed mt-0.5">
+                          {courseDetail.description}
+                        </p>
+                      </div>
+                    )}
+                    {courseDetail && courseDetail !== "loading" && courseDetail.prerequisites && (
+                      <div>
+                        <span className="text-[11px] text-slate-400">Prerequisites</span>
+                        <p className="text-[12px] text-slate-600 leading-relaxed mt-0.5">
+                          {courseDetail.prerequisites}
+                        </p>
+                      </div>
+                    )}
+                    {courseDetail && courseDetail !== "loading" && !courseDetail.description && !courseDetail.prerequisites && (
+                      <p className="text-[12px] text-slate-400">No description available</p>
+                    )}
                   </div>
                 </div>
               </div>
