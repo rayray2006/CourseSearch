@@ -132,117 +132,118 @@ export default function Home() {
               </div>
             </div>
           ) : (
-            <div className="h-full flex flex-col">
-              {/* Weekly grid */}
-              <div className="flex-1 overflow-auto">
-                <div className="min-w-[600px]">
-                  {/* Day headers */}
-                  <div className="grid grid-cols-[60px_repeat(5,1fr)] sticky top-0 bg-gray-50 z-10 border-b border-gray-200">
-                    <div />
-                    {DAYS.map((day) => (
-                      <div
-                        key={day}
-                        className="text-center text-xs font-medium text-gray-500 py-2 border-l border-gray-200"
-                      >
-                        {day}
-                      </div>
-                    ))}
-                  </div>
+            <div className="h-full overflow-auto">
+              <div className="min-w-[600px]">
+                {/* Day headers */}
+                <div className="grid grid-cols-[60px_repeat(5,1fr)] sticky top-0 bg-gray-50 z-10 border-b border-gray-200">
+                  <div />
+                  {DAYS.map((day) => (
+                    <div
+                      key={day}
+                      className="text-center text-xs font-medium text-gray-500 py-2 border-l border-gray-200"
+                    >
+                      {day}
+                    </div>
+                  ))}
+                </div>
 
-                  {/* Time grid */}
-                  <div className="relative grid grid-cols-[60px_repeat(5,1fr)]">
-                    {/* Hour labels + lines */}
-                    {HOURS.map((hour) => (
-                      <div key={hour} className="contents">
-                        <div className="h-12 text-xs text-gray-400 text-right pr-2 pt-0 -mt-2">
-                          {hour > 12 ? hour - 12 : hour}
-                          {hour >= 12 ? "PM" : "AM"}
-                        </div>
-                        {DAYS.map((_, di) => (
-                          <div
-                            key={di}
-                            className="h-12 border-l border-t border-gray-200"
-                          />
-                        ))}
+                {/* Time grid */}
+                <div className="relative grid grid-cols-[60px_repeat(5,1fr)]">
+                  {/* Hour labels + lines */}
+                  {HOURS.map((hour) => (
+                    <div key={hour} className="contents">
+                      <div className="h-12 text-xs text-gray-400 text-right pr-2 pt-0 -mt-2">
+                        {hour > 12 ? hour - 12 : hour}
+                        {hour >= 12 ? "PM" : "AM"}
                       </div>
-                    ))}
+                      {DAYS.map((_, di) => (
+                        <div
+                          key={di}
+                          className="h-12 border-l border-t border-gray-200"
+                        />
+                      ))}
+                    </div>
+                  ))}
 
-                    {/* Course blocks */}
-                    {schedule.map((course) => {
+                  {/* Course blocks with overlap handling */}
+                  {(() => {
+                    // Build list of all blocks with their positions
+                    const blocks: {
+                      course: ScheduledCourse;
+                      dayIdx: number;
+                      topOffset: number;
+                      height: number;
+                      color: string;
+                    }[] = [];
+
+                    schedule.forEach((course) => {
                       const parsed = parseMeetings(course.meetings);
-                      if (!parsed) return null;
+                      if (!parsed) return;
                       const color =
                         colorMap.get(
                           `${course.offering_name}::${course.section_name}`
                         ) || COLORS[0];
 
-                      return parsed.days.map((dayIdx) => {
-                        if (dayIdx > 4) return null; // skip weekends
+                      parsed.days.forEach((dayIdx) => {
+                        if (dayIdx > 4) return;
                         const topOffset =
                           (parsed.startHour - 8) * 48 +
                           (parsed.startMin / 60) * 48;
                         const height =
                           (parsed.endHour - parsed.startHour) * 48 +
                           ((parsed.endMin - parsed.startMin) / 60) * 48;
-
-                        return (
-                          <div
-                            key={`${course.offering_name}-${course.section_name}-${dayIdx}`}
-                            className={`absolute border rounded-md px-1 py-0.5 overflow-hidden text-xs leading-tight ${color}`}
-                            style={{
-                              top: `${topOffset}px`,
-                              height: `${height}px`,
-                              left: `calc(60px + ${dayIdx} * ((100% - 60px) / 5) + 2px)`,
-                              width: `calc((100% - 60px) / 5 - 4px)`,
-                            }}
-                          >
-                            <div className="font-semibold truncate">
-                              {course.offering_name}
-                            </div>
-                            <div className="truncate">{course.title}</div>
-                          </div>
-                        );
+                        blocks.push({ course, dayIdx, topOffset, height, color });
                       });
-                    })}
-                  </div>
-                </div>
-              </div>
+                    });
 
-              {/* Course list below grid */}
-              <div className="mt-3 border-t border-gray-200 pt-3 space-y-2 shrink-0">
-                {schedule.map((course) => {
-                  const color =
-                    colorMap.get(
-                      `${course.offering_name}::${course.section_name}`
-                    ) || COLORS[0];
-                  return (
-                    <div
-                      key={`${course.offering_name}-${course.section_name}`}
-                      className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${color}`}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">
-                          {course.offering_name} - {course.title}
+                    // For each block, find overlapping siblings on same day
+                    return blocks.map((block) => {
+                      const overlapping = blocks.filter(
+                        (b) =>
+                          b.dayIdx === block.dayIdx &&
+                          b.topOffset < block.topOffset + block.height &&
+                          b.topOffset + b.height > block.topOffset
+                      );
+                      // Sort overlapping group consistently so index is stable
+                      overlapping.sort((a, b) => {
+                        const keyA = `${a.course.offering_name}::${a.course.section_name}`;
+                        const keyB = `${b.course.offering_name}::${b.course.section_name}`;
+                        return keyA.localeCompare(keyB);
+                      });
+                      const overlapIndex = overlapping.indexOf(block);
+                      const overlapCount = overlapping.length;
+
+                      return (
+                        <div
+                          key={`${block.course.offering_name}-${block.course.section_name}-${block.dayIdx}`}
+                          className={`absolute border rounded-md px-1 py-0.5 overflow-hidden text-xs leading-tight group ${block.color}`}
+                          style={{
+                            top: `${block.topOffset}px`,
+                            height: `${block.height}px`,
+                            left: `calc(60px + ${block.dayIdx} * ((100% - 60px) / 5) + 2px + ${overlapIndex} * ((100% - 60px) / 5 - 4px) / ${overlapCount})`,
+                            width: `calc(((100% - 60px) / 5 - 4px) / ${overlapCount})`,
+                          }}
+                        >
+                          <button
+                            onClick={() => {
+                              sendMessage({
+                                text: `Remove ${block.course.offering_name} section ${block.course.section_name} from my schedule`,
+                              });
+                            }}
+                            className="absolute top-0 right-0 w-4 h-4 flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-70 hover:!opacity-100 transition-opacity bg-white/50 rounded-bl"
+                            title="Remove from schedule"
+                          >
+                            ✕
+                          </button>
+                          <div className="font-semibold truncate">
+                            {block.course.offering_name}
+                          </div>
+                          <div className="truncate">{block.course.title}</div>
                         </div>
-                        <div className="text-xs opacity-75 truncate">
-                          {course.meetings} | {course.instructors_full_name} |{" "}
-                          {course.credits} cr
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          sendMessage({
-                            text: `Remove ${course.offering_name} section ${course.section_name} from my schedule`,
-                          });
-                        }}
-                        className="shrink-0 text-xs opacity-50 hover:opacity-100 transition-opacity"
-                        title="Remove from schedule"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  );
-                })}
+                      );
+                    });
+                  })()}
+                </div>
               </div>
             </div>
           )}
