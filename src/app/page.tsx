@@ -82,17 +82,47 @@ const PALETTE = [
 
 // --- Markdown helper ---
 function md(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.*?)\*/g, "<em>$1</em>")
-    .replace(
+  const lines = text.split("\n");
+  let inList = false;
+  let listLevel = 0;
+  const out: string[] = [];
+
+  for (const raw of lines) {
+    let line = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    // Inline formatting
+    line = line.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+    line = line.replace(
       /`(.*?)`/g,
       '<code style="background:#f1f5f9;padding:1px 4px;border-radius:4px;font-size:0.7rem;font-family:var(--font-mono)">$1</code>'
-    )
-    .replace(/\n/g, "<br/>");
+    );
+
+    const subBullet = line.match(/^ {2,}\* (.+)/);
+    const topBullet = line.match(/^\* (.+)/);
+
+    if (subBullet) {
+      if (!inList) { inList = true; listLevel = 1; }
+      listLevel = 1;
+      out.push(`<div style="padding-left:16px;margin-top:1px;display:flex;align-items:baseline;gap:6px"><span style="color:#cbd5e1;flex-shrink:0">·</span><span>${subBullet[1]}</span></div>`);
+    } else if (topBullet) {
+      if (inList) {
+        out.push('<div style="margin-top:8px"></div>');
+      }
+      inList = true;
+      listLevel = 0;
+      out.push(`<div style="display:flex;align-items:baseline;gap:6px"><span style="color:#94a3b8;flex-shrink:0">•</span><span>${topBullet[1]}</span></div>`);
+    } else {
+      if (inList) { inList = false; listLevel = 0; }
+      line = line.replace(/\*(.*?)\*/g, "<em>$1</em>");
+      if (line.trim() === "") {
+        out.push('<div style="margin-top:6px"></div>');
+      } else {
+        out.push(`<div>${line}</div>`);
+      }
+    }
+  }
+
+  return out.join("");
 }
 
 // Match course codes and section lines separately
@@ -110,8 +140,17 @@ function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, s
     const idx = match.index!;
     if (idx > lastIdx) parts.push({ type: "html", text: html.slice(lastIdx, idx) });
     if (match[1]) {
-      // Course code like EN.601.230
-      parts.push({ type: "code", text: match[0], value: match[1] });
+      // Course code like EN.601.230 — also grab the course name that follows
+      // e.g. "EN.601.226 Data Structures" or "EN.601.226</strong> Data Structures"
+      let endIdx = idx + match[0].length;
+      const rest = html.slice(endIdx);
+      // Grab trailing text up to next <br/>, <div, another course code, or "Section"
+      const nameMatch = rest.match(/^((?:\s+(?!Section\b)[A-Za-z][\w&:,/\-–—'()]*)*)/);
+      const trailingName = nameMatch ? nameMatch[0] : "";
+      endIdx += trailingName.length;
+      parts.push({ type: "code", text: html.slice(idx, endIdx), value: match[1] });
+      lastIdx = endIdx;
+      continue;
     } else if (match[2]) {
       // Section NN
       parts.push({ type: "section", text: match[0], value: match[2] });
@@ -124,14 +163,13 @@ function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, s
     return <span dangerouslySetInnerHTML={{ __html: html }} />;
   }
 
-  // Track the most recent course code so section buttons know what course they belong to
-  let lastCode = "";
-  // Count how many sections follow each course code to decide whether to show button on the code itself
-  const codeSectionCounts = new Map<number, number>();
-  let lastCodeIdx = -1;
-  for (const p of parts) {
-    if (p.type === "code") { lastCodeIdx = parts.indexOf(p); codeSectionCounts.set(lastCodeIdx, 0); }
-    if (p.type === "section" && lastCodeIdx >= 0) codeSectionCounts.set(lastCodeIdx, (codeSectionCounts.get(lastCodeIdx) || 0) + 1);
+  // Pre-compute the parent course code for each section part
+  // so button onClick closures capture the correct code
+  const sectionCourseMap = new Map<number, string>();
+  let currentCode = "";
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i].type === "code") currentCode = parts[i].value!;
+    if (parts[i].type === "section") sectionCourseMap.set(i, currentCode);
   }
 
   return (
@@ -141,19 +179,18 @@ function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, s
           return <span key={i} dangerouslySetInnerHTML={{ __html: p.text }} />;
         }
         if (p.type === "code") {
-          lastCode = p.value!;
-          const hasSections = (codeSectionCounts.get(i) || 0) > 0;
-          // Only show add button on section lines, not on the course code itself
-          return <span key={i}>{p.text}</span>;
+          return <strong key={i}>{p.text}</strong>;
         }
-        if (p.type === "section" && lastCode) {
+        if (p.type === "section") {
+          const courseCode = sectionCourseMap.get(i) || "";
+          if (!courseCode) return <span key={i}>{p.text}</span>;
           return (
             <span key={i}>
               {p.text}
               <button
-                onClick={(e) => { e.stopPropagation(); onAdd(lastCode, p.value!); }}
+                onClick={(e) => { e.stopPropagation(); onAdd(courseCode, p.value!); }}
                 className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100 text-emerald-600 hover:bg-emerald-200 text-[9px] font-bold leading-none transition-colors flex-shrink-0 align-middle ml-0.5"
-                title={`Add ${lastCode} section ${p.value}`}
+                title={`Add ${courseCode} section ${p.value}`}
               >+</button>
             </span>
           );
@@ -162,6 +199,28 @@ function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, s
       })}
     </span>
   );
+}
+
+// --- Parse prerequisites: split on ";" into restrictions vs actual prereqs ---
+const RESTRICTION_PATTERNS = [
+  /^students?\s+(may|can|must|should)\s+(not|only|receive|earn)/i,
+  /^student\s+may\s+not\s+enroll/i,
+  /^credit\s+(may|can)\s+(only|not)/i,
+  /^you\s+(cannot|can\s+not|may\s+not)/i,
+];
+
+function splitPrerequisites(raw: string): { restrictions: string[]; prereqs: string[] } {
+  const parts = raw.split(";").map((s) => s.trim()).filter(Boolean);
+  const restrictions: string[] = [];
+  const prereqs: string[] = [];
+  for (const part of parts) {
+    if (RESTRICTION_PATTERNS.some((p) => p.test(part))) {
+      restrictions.push(part);
+    } else {
+      prereqs.push(part);
+    }
+  }
+  return { restrictions, prereqs };
 }
 
 // ===================== COMPONENT =====================
@@ -625,14 +684,31 @@ export default function Home() {
                         </p>
                       </div>
                     )}
-                    {courseDetail && courseDetail !== "loading" && courseDetail.prerequisites && (
-                      <div>
-                        <span className="text-[11px] text-slate-400">Prerequisites</span>
-                        <p className="text-[12px] text-slate-600 leading-relaxed mt-0.5">
-                          {courseDetail.prerequisites}
-                        </p>
-                      </div>
-                    )}
+                    {courseDetail && courseDetail !== "loading" && courseDetail.prerequisites && (() => {
+                      const { restrictions, prereqs } = splitPrerequisites(courseDetail.prerequisites);
+                      return (
+                        <>
+                          {prereqs.length > 0 && (
+                            <div>
+                              <span className="text-[11px] text-slate-400">Prerequisites</span>
+                              <p className="text-[12px] text-slate-600 leading-relaxed mt-0.5">
+                                {prereqs.join("; ")}
+                              </p>
+                            </div>
+                          )}
+                          {restrictions.length > 0 && (
+                            <div>
+                              <span className="text-[11px] text-slate-400">Restrictions</span>
+                              {restrictions.map((r, i) => (
+                                <p key={i} className="text-[12px] text-amber-600 leading-relaxed mt-0.5">
+                                  {r}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                     {courseDetail && courseDetail !== "loading" && !courseDetail.description && !courseDetail.prerequisites && (
                       <p className="text-[12px] text-slate-400">No description available</p>
                     )}
@@ -741,7 +817,14 @@ export default function Home() {
             </div>
           ))}
 
-          {isLoading && messages[messages.length - 1]?.role === "user" && (
+          {isLoading && (() => {
+            const last = messages[messages.length - 1];
+            if (!last) return false;
+            if (last.role === "user") return true;
+            // Show dots if assistant message has no visible text yet (only tool calls)
+            const hasText = last.parts.some((p) => p.type === "text" && p.text.trim());
+            return !hasText;
+          })() && (
             <div className="flex justify-start">
               <div className="bg-slate-100 rounded-2xl px-3.5 py-2.5">
                 <div className="flex items-center gap-2 text-[11px] text-slate-400">
