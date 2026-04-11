@@ -97,7 +97,8 @@ export const searchCourses = tool({
     if (input.courseNumber) query = query.ilike("offering_name", `%${input.courseNumber}%`);
 
     // ── Department / school / level ──
-    if (input.department) query = query.ilike("department", `%${input.department}%`);
+    // Search all_departments (cross-listed) with fallback to department
+    if (input.department) query = query.or(`all_departments.ilike.%${input.department}%,department.ilike.%${input.department}%`);
     if (input.school) query = query.ilike("school_name", `%${input.school}%`);
     if (input.level) query = query.eq("level", input.level);
 
