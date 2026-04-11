@@ -94,7 +94,7 @@ export const searchCourses = tool({
       .string()
       .optional()
       .describe(
-        "Search within prerequisites text, e.g. a course number like 'EN.601.226' or keyword like 'calculus'. Finds courses that require a specific prerequisite."
+        "Find courses that require a specific prerequisite. Accepts EITHER a course code (e.g. 'EN.601.226') OR a course name/keywords (e.g. 'data structures' or 'deep learning'). When given a name, it first resolves to matching course codes then searches prerequisites for those codes."
       ),
   }),
   execute: async (input) => {
@@ -192,12 +192,50 @@ export const searchCourses = tool({
       conditions.push("(prerequisites = '' OR prerequisites IS NULL)");
     }
     if (input.prerequisiteKeyword) {
-      const words = input.prerequisiteKeyword.split(/\s+/).filter((w) => w.length > 0);
-      words.forEach((word, i) => {
-        const paramName = `prereqWord${i}`;
-        conditions.push(`prerequisites LIKE @${paramName}`);
-        params[paramName] = `%${word}%`;
-      });
+      const keyword = input.prerequisiteKeyword.trim();
+      const looksLikeCode = /^[A-Z]{2}\.\d{3}\.\d{3}$/.test(keyword);
+
+      if (looksLikeCode) {
+        // Direct code search
+        conditions.push("prerequisites LIKE @prereqCode");
+        params.prereqCode = `%${keyword}%`;
+      } else {
+        // Looks like a course name — resolve to course codes first, then search
+        // for both the name words AND any matching course codes
+        const titleWords = keyword.split(/\s+/).filter((w) => w.length > 0);
+        const titleConditions = titleWords.map(
+          (_, i) => `title LIKE '%' || @lookupWord${i} || '%'`
+        );
+        const lookupParams: Record<string, string> = {};
+        titleWords.forEach((word, i) => {
+          lookupParams[`lookupWord${i}`] = word;
+        });
+
+        const matchingCourses = db
+          .prepare(
+            `SELECT DISTINCT offering_name FROM courses WHERE ${titleConditions.join(" AND ")}`
+          )
+          .all(lookupParams) as { offering_name: string }[];
+
+        const codes = matchingCourses.map((r) => r.offering_name);
+
+        if (codes.length > 0) {
+          // Search prerequisites for any of the resolved course codes
+          const codeConditions = codes.map((code, i) => {
+            const paramName = `prereqCode${i}`;
+            params[paramName] = `%${code}%`;
+            return `prerequisites LIKE @${paramName}`;
+          });
+          conditions.push(`(${codeConditions.join(" OR ")})`);
+        } else {
+          // No matching courses found — fall back to text search
+          titleWords.forEach((word, i) => {
+            const paramName = `prereqWord${i}`;
+            conditions.push(`prerequisites LIKE @${paramName}`);
+            params[paramName] = `%${word}%`;
+          });
+        }
+      }
     }
 
     const where =
