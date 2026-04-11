@@ -70,6 +70,14 @@ Tips for translating queries:
 - "courses that require calculus" → prerequisiteKeyword: "calculus"
 - "courses with no prerequisites" → hasPrerequisites: false
 
+Time-based queries — THIS IS IMPORTANT:
+- "same time as EN.601.433" → first search for EN.601.433 to get its meetings (e.g. "TTh 1:30PM - 2:45PM"), then search with meetingsExact: "TTh 1:30PM - 2:45PM"
+- "CS courses at TTh 10:30AM - 11:45AM" → department: "Computer Science", meetingsExact: "TTh 10:30AM - 11:45AM"
+- "what conflicts with EN.601.433" → first get its meetings, then use meetingsOverlap with the time string to find overlapping courses
+- "courses that overlap with TTh 1:30PM - 2:45PM" → meetingsOverlap: "TTh 1:30PM - 2:45PM"
+- meetingsExact matches the EXACT time slot. meetingsOverlap finds any course with ANY time overlap on shared days.
+- Always look up the source course's meetings first, then use the exact string from the meetings field.
+
 When showing course details, include the description and prerequisites if available.
 
 Course evaluations:

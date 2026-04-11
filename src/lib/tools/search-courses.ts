@@ -2,7 +2,40 @@ import { tool } from "ai";
 import { z } from "zod";
 import { supabase } from "../supabase";
 
-const COURSE_COLUMNS = "offering_name, section_name, title, credits, department, school_name, level, status, meetings, location, building, instruction_method, instructors_full_name, max_seats, open_seats, waitlisted, is_writing_intensive, areas, time_of_day, description, prerequisites, corequisites, restrictions, overall_quality, instructor_effectiveness, intellectual_challenge, workload, feedback_usefulness, num_evaluations, num_respondents";
+const COURSE_COLUMNS = "offering_name, section_name, title, credits, department, school_name, level, status, meetings, location, building, instruction_method, instructors_full_name, max_seats, open_seats, waitlisted, is_writing_intensive, areas, time_of_day, description, prerequisites, corequisites, restrictions, overall_quality, instructor_effectiveness, intellectual_challenge, workload, feedback_usefulness, num_evaluations, num_respondents, all_departments";
+
+// Parse "TTh 10:30AM - 11:45AM" into { days: string, startMin: number, endMin: number }
+function parseMeetingTime(meetings: string): { days: string; startMin: number; endMin: number } | null {
+  // Handle comma-separated (take first part)
+  const part = meetings.split(",")[0].trim();
+  const match = part.match(/^(\S+)\s+(\d{1,2}):(\d{2})(AM|PM)\s*-\s*(\d{1,2}):(\d{2})(AM|PM)$/);
+  if (!match) return null;
+  const [, days, sh, sm, sap, eh, em, eap] = match;
+  let startH = parseInt(sh);
+  if (sap === "PM" && startH !== 12) startH += 12;
+  if (sap === "AM" && startH === 12) startH = 0;
+  let endH = parseInt(eh);
+  if (eap === "PM" && endH !== 12) endH += 12;
+  if (eap === "AM" && endH === 12) endH = 0;
+  return { days, startMin: startH * 60 + parseInt(sm), endMin: endH * 60 + parseInt(em) };
+}
+
+const DAY_EXPAND: Record<string, string[]> = {
+  M: ["M"], T: ["T"], W: ["W"], Th: ["Th"], F: ["F"],
+  MW: ["M","W"], MF: ["M","F"], MWF: ["M","W","F"], TTh: ["T","Th"],
+  MT: ["M","T"], MTW: ["M","T","W"], WF: ["W","F"], TF: ["T","F"], ThF: ["Th","F"],
+  TWThF: ["T","W","Th","F"], MTWThF: ["M","T","W","Th","F"], MTThF: ["M","T","Th","F"],
+};
+
+function daysOverlap(a: string, b: string): boolean {
+  const aDays = DAY_EXPAND[a] || [a];
+  const bDays = DAY_EXPAND[b] || [b];
+  return aDays.some((d) => bDays.includes(d));
+}
+
+function timesOverlap(a: { startMin: number; endMin: number }, b: { startMin: number; endMin: number }): boolean {
+  return a.startMin < b.endMin && a.endMin > b.startMin;
+}
 
 export const searchCourses = tool({
   description: `Search JHU Fall 2026 courses. Use this to find courses matching criteria like title keywords, department, school, level, schedule, credits, instructor, etc. Returns up to 20 results. For broad queries, encourage the user to narrow down.`,
@@ -26,6 +59,12 @@ export const searchCourses = tool({
     // ── Schedule ──
     daysOfWeek: z.string().optional().describe("Day pattern prefix, e.g. 'MWF', 'TTh', 'MW', 'M', 'F'. Matches the EXACT day prefix of the meetings field."),
     timeOfDay: z.enum(["Morning", "Afternoon", "Evening", "Other"]).optional().describe("Time of day bucket."),
+    meetingsExact: z.string().optional().describe(
+      "Exact meetings string to match, e.g. 'TTh 10:30AM - 11:45AM'. Use when the user asks for courses at a specific time or 'same time as' another course. Matches the full meetings field exactly."
+    ),
+    meetingsOverlap: z.string().optional().describe(
+      "Find courses whose meeting times overlap with this time string, e.g. 'TTh 10:30AM - 11:45AM'. Use when the user asks for conflicts or overlapping courses. Format: 'DAYS START - END' where DAYS is like TTh, MWF, etc."
+    ),
 
     // ── Logistics ──
     credits: z.string().optional().describe("Credit amount, e.g. '3.00'. Matches exact or ranges containing this value."),
@@ -112,6 +151,7 @@ export const searchCourses = tool({
     // ── Schedule ──
     if (input.daysOfWeek) query = query.ilike("meetings", `${input.daysOfWeek} %`);
     if (input.timeOfDay) query = query.eq("time_of_day", input.timeOfDay);
+    if (input.meetingsExact) query = query.ilike("meetings", input.meetingsExact);
 
     // ── Logistics ──
     if (input.credits) query = query.or(`credits.eq.${input.credits},credits.ilike.%${input.credits}%`);
@@ -257,7 +297,25 @@ export const searchCourses = tool({
       };
     });
 
-    return { count: resolvedRows.length, courses: resolvedRows };
+    // Apply overlap filter client-side (can't do time parsing in Supabase)
+    let finalRows = resolvedRows;
+    if (input.meetingsOverlap) {
+      const target = parseMeetingTime(input.meetingsOverlap);
+      if (target) {
+        finalRows = finalRows.filter((row) => {
+          const m = row.meetings;
+          if (!m) return false;
+          // Check each comma-separated meeting part
+          return m.split(",").some((part: string) => {
+            const parsed = parseMeetingTime(part.trim());
+            if (!parsed) return false;
+            return daysOverlap(target.days, parsed.days) && timesOverlap(target, parsed);
+          });
+        });
+      }
+    }
+
+    return { count: finalRows.length, courses: finalRows };
   },
 });
 
