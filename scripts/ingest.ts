@@ -8,7 +8,6 @@ const SCHOOLS = [
   "Krieger School of Arts and Sciences",
   "Krieger School of Arts and Sciences Advanced Academic Programs",
   "Whiting School of Engineering",
-  "Whiting School of Engineering for Professionals",
 ];
 
 interface Course {
