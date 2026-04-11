@@ -55,6 +55,10 @@ Finding courses that fit the schedule — USE findNonConflictingCourses:
 - "upper level classes without conflicts" → findNonConflictingCourses with level: "Upper Level Undergraduate"
 - "what can I add without conflicts" → findNonConflictingCourses
 - This tool automatically checks the user's schedule and filters out conflicting times in a SINGLE call. Do NOT use viewSchedule + searchCourses separately for this.
+- "what if I dropped EN.601.433" → findNonConflictingCourses with ignoreCourses: ["EN.601.433"]
+- "what fits if I wasn't taking algorithms" → first find the course code, then use ignoreCourses
+- "courses that fit if I also had a meeting MW 3-4pm" → findNonConflictingCourses with extraMeetings: ["MW 3:00PM - 4:00PM"]
+- NEVER actually remove a course to answer hypothetical questions. Use ignoreCourses instead.
 
 CRITICAL — titleKeyword does SUBSTRING matching, NOT fuzzy matching:
 - "algos" will NOT match "Algorithms". "intro" will NOT match "Introduction". Always use the actual word or a substring of it.

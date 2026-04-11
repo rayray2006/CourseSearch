@@ -130,7 +130,7 @@ export const clearMySchedule = tool({
 
 export const findNonConflictingCourses = tool({
   description:
-    "Find courses that DON'T conflict with the user's current schedule. Use this when the user asks 'what fits in my schedule', 'courses without conflicts', 'classes that work with my schedule', etc. Automatically checks the user's schedule and filters out conflicting times.",
+    "Find courses that DON'T conflict with the user's current schedule. Use for 'what fits in my schedule', 'courses without conflicts', etc. Supports hypothetical scenarios via ignoreCourses and extraMeetings.",
   inputSchema: z.object({
     department: z.string().optional().describe("Filter by department, e.g. 'Computer Science'"),
     level: z
@@ -139,6 +139,18 @@ export const findNonConflictingCourses = tool({
       .describe("Course level filter"),
     titleKeyword: z.string().optional().describe("Keywords in course title"),
     limit: z.number().optional().describe("Max results (default 20, max 50)"),
+    ignoreCourses: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Course offering_names to IGNORE from the schedule when checking conflicts. Use for hypothetical questions like 'what if I dropped EN.601.433' — pass ['EN.601.433'] to exclude it from conflict checking without actually removing it."
+      ),
+    extraMeetings: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Extra meeting times to treat as busy (in addition to the schedule). Format: 'TTh 1:30PM - 2:45PM'. Use for hypothetical questions like 'what fits if I also have a meeting TTh 3-4'."
+      ),
   }),
   execute: async (input) => {
     // 1. Get user's current schedule
@@ -160,10 +172,22 @@ export const findNonConflictingCourses = tool({
       .select("offering_name, meetings")
       .or(orFilter);
 
+    const ignoreCodes = new Set(input.ignoreCourses || []);
     const scheduledMeetings = (scheduledCourses || [])
+      .filter((c) => !ignoreCodes.has(c.offering_name))
       .map((c) => c.meetings)
       .filter(Boolean) as string[];
-    const scheduledCodes = new Set(scheduleRows.map((r) => r.offering_name));
+
+    // Add any extra hypothetical busy times
+    if (input.extraMeetings) {
+      scheduledMeetings.push(...input.extraMeetings);
+    }
+
+    const scheduledCodes = new Set(
+      scheduleRows
+        .filter((r) => !ignoreCodes.has(r.offering_name))
+        .map((r) => r.offering_name)
+    );
 
     // 2. Search for candidate courses
     let query = supabase
