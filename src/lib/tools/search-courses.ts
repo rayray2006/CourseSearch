@@ -8,7 +8,9 @@ export const searchCourses = tool({
     titleKeyword: z
       .string()
       .optional()
-      .describe("Keyword to search in course title (case-insensitive)"),
+      .describe(
+        "Keywords to search in course title (case-insensitive). Multiple words are matched independently — each word must appear somewhere in the title but not necessarily adjacent. E.g. 'sensor robotics' matches 'Algorithms for Sensor-Based Robotics'. Use short distinctive keywords rather than full phrases."
+      ),
     department: z
       .string()
       .optional()
@@ -85,8 +87,14 @@ export const searchCourses = tool({
     const params: Record<string, string> = {};
 
     if (input.titleKeyword) {
-      conditions.push("title LIKE @titleKeyword");
-      params.titleKeyword = `%${input.titleKeyword}%`;
+      // Split into individual words and match each independently
+      // "sensor based robotics" → title LIKE '%sensor%' AND title LIKE '%based%' AND title LIKE '%robotics%'
+      const words = input.titleKeyword.split(/\s+/).filter((w) => w.length > 0);
+      words.forEach((word, i) => {
+        const paramName = `titleWord${i}`;
+        conditions.push(`title LIKE @${paramName}`);
+        params[paramName] = `%${word}%`;
+      });
     }
     if (input.department) {
       conditions.push("department LIKE @department");
@@ -110,8 +118,13 @@ export const searchCourses = tool({
       params.credits = input.credits;
     }
     if (input.instructor) {
-      conditions.push("instructors_full_name LIKE @instructor");
-      params.instructor = `%${input.instructor}%`;
+      // Split to handle "first last" searches matching "Last, First" format
+      const words = input.instructor.split(/\s+/).filter((w) => w.length > 0);
+      words.forEach((word, i) => {
+        const paramName = `instrWord${i}`;
+        conditions.push(`instructors_full_name LIKE @${paramName}`);
+        params[paramName] = `%${word}%`;
+      });
     }
     if (input.daysOfWeek) {
       // Match the exact day prefix: "M 4:30PM..." not "MWF 10:00AM..."
