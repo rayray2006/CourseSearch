@@ -163,14 +163,32 @@ function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, s
     return <span dangerouslySetInnerHTML={{ __html: html }} />;
   }
 
-  // Pre-compute the parent course code for each section part
-  // so button onClick closures capture the correct code
+  // Pre-compute: parent course code for each section, and section count per course code
   const sectionCourseMap = new Map<number, string>();
+  const codeSectionCount = new Map<number, number>();
+  const codeFirstSection = new Map<number, string>(); // for single-section courses
   let currentCode = "";
+  let currentCodeIdx = -1;
   for (let i = 0; i < parts.length; i++) {
-    if (parts[i].type === "code") currentCode = parts[i].value!;
-    if (parts[i].type === "section") sectionCourseMap.set(i, currentCode);
+    if (parts[i].type === "code") {
+      currentCode = parts[i].value!;
+      currentCodeIdx = i;
+      codeSectionCount.set(i, 0);
+    }
+    if (parts[i].type === "section" && currentCodeIdx >= 0) {
+      sectionCourseMap.set(i, currentCode);
+      codeSectionCount.set(currentCodeIdx, (codeSectionCount.get(currentCodeIdx) || 0) + 1);
+      if (!codeFirstSection.has(currentCodeIdx)) codeFirstSection.set(currentCodeIdx, parts[i].value!);
+    }
   }
+
+  const addBtn = (code: string, section: string) => (
+    <button
+      onClick={(e) => { e.stopPropagation(); onAdd(code, section); }}
+      className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100 text-emerald-600 hover:bg-emerald-200 text-[9px] font-bold leading-none transition-colors flex-shrink-0 align-middle ml-0.5"
+      title={`Add ${code} section ${section}`}
+    >+</button>
+  );
 
   return (
     <span>
@@ -179,21 +197,30 @@ function MessageContent({ html, onAdd }: { html: string; onAdd: (code: string, s
           return <span key={i} dangerouslySetInnerHTML={{ __html: p.text }} />;
         }
         if (p.type === "code") {
+          const sectionCount = codeSectionCount.get(i) || 0;
+          if (sectionCount <= 1) {
+            // No sections listed, or only one — show add button on the course code
+            const section = codeFirstSection.get(i) || "01";
+            return <strong key={i}>{p.text}{addBtn(p.value!, section)}</strong>;
+          }
+          // Multiple sections — buttons go on each section line
           return <strong key={i}>{p.text}</strong>;
         }
         if (p.type === "section") {
           const courseCode = sectionCourseMap.get(i) || "";
           if (!courseCode) return <span key={i}>{p.text}</span>;
-          return (
-            <span key={i}>
-              {p.text}
-              <button
-                onClick={(e) => { e.stopPropagation(); onAdd(courseCode, p.value!); }}
-                className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100 text-emerald-600 hover:bg-emerald-200 text-[9px] font-bold leading-none transition-colors flex-shrink-0 align-middle ml-0.5"
-                title={`Add ${courseCode} section ${p.value}`}
-              >+</button>
-            </span>
-          );
+          // Find the parent code index to check section count
+          let parentIdx = -1;
+          for (let j = i - 1; j >= 0; j--) {
+            if (parts[j].type === "code") { parentIdx = j; break; }
+          }
+          const sectionCount = parentIdx >= 0 ? (codeSectionCount.get(parentIdx) || 0) : 0;
+          if (sectionCount > 1) {
+            // Multiple sections — show button on each section
+            return <span key={i}>{p.text}{addBtn(courseCode, p.value!)}</span>;
+          }
+          // Single section — button is already on the course code
+          return <span key={i}>{p.text}</span>;
         }
         return <span key={i}>{p.text}</span>;
       })}
@@ -316,7 +343,14 @@ export default function Home() {
       .catch(() => setCourseDetail(null));
   }, [selected]);
 
-  const isLoading = status === "submitted" || status === "streaming";
+  const isActive = status === "submitted" || status === "streaming";
+
+  // Show loading state if actively processing OR if the last assistant message
+  // has no visible text yet (covers brief "ready" gaps between tool loop rounds)
+  const lastMsg = messages[messages.length - 1];
+  const lastAssistantHasText = lastMsg?.role === "assistant" &&
+    lastMsg.parts.some((p) => p.type === "text" && p.text.trim());
+  const isLoading = isActive || (lastMsg?.role === "assistant" && !lastAssistantHasText);
 
   // Color assignment
   const colorOf = useCallback(
@@ -722,16 +756,16 @@ export default function Home() {
 
       {/* ---- RIGHT: Chat ---- */}
       <aside className="w-[380px] shrink-0 border-l border-slate-200 bg-white flex flex-col">
-        {/* Chat header */}
-        <div className="px-4 py-3 border-b border-slate-100 shrink-0">
-          <p className="text-xs font-semibold text-slate-700 tracking-tight">
+        {/* Chat header — aligned with left top bar */}
+        <div className="flex items-center px-5 py-3 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
+          <p className="text-base font-semibold text-slate-900 tracking-tight">
             Course Assistant
           </p>
         </div>
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-          {messages.length === 0 && (
+          {messages.length === 0 && !isLoading && (
             <div className="pt-6 space-y-4">
               <p className="text-[13px] text-slate-500 leading-relaxed">
                 I can help you find courses, check prerequisites, and build your
@@ -746,7 +780,9 @@ export default function Home() {
                 ].map((s) => (
                   <button
                     key={s}
-                    onClick={() => sendMessage({ text: s })}
+                    onClick={() => {
+                      sendMessage({ text: s });
+                    }}
                     className="block w-full text-left px-3 py-2 rounded-lg text-xs text-slate-600 bg-slate-50 hover:bg-blue-50 hover:text-blue-700 transition-colors"
                   >
                     {s}
@@ -756,7 +792,17 @@ export default function Home() {
             </div>
           )}
 
-          {messages.map((message) => (
+          {messages.map((message) => {
+            // Hide assistant messages that have no visible content (only hidden tool parts)
+            if (message.role === "assistant") {
+              const hasVisible = message.parts.some((p) => {
+                if (p.type === "text" && p.text.trim()) return true;
+                if (isToolUIPart(p) && p.state !== "output-available") return true;
+                return false;
+              });
+              if (!hasVisible) return null;
+            }
+            return (
             <div
               key={message.id}
               className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
@@ -815,7 +861,8 @@ export default function Home() {
                 })}
               </div>
             </div>
-          ))}
+          );
+          })}
 
           {isLoading && (() => {
             const last = messages[messages.length - 1];
