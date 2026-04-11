@@ -7,7 +7,7 @@ import {
   viewSchedule,
   clearMySchedule,
 } from "../tools/schedule-tools";
-import { searchProfessors } from "../tools/search-professors";
+import { searchProfessors, findRatedInstructors } from "../tools/search-professors";
 
 export const courseAgent = new ToolLoopAgent({
   model: google("gemini-2.5-flash"),
@@ -67,10 +67,19 @@ Course evaluations:
 Professor ratings (RateMyProfessors):
 - Use searchProfessors when users ask about a professor's ratings, reputation, difficulty, or want to compare professors.
 - Data includes: avg_rating (1-5, higher=better), avg_difficulty (1-5, higher=harder), num_ratings, would_take_again_pct (percentage, -1 means no data).
-- "Who is the best rated CS professor?" → searchProfessors with department "Computer Science", sortBy "rating_desc".
 - "Is professor X hard?" → searchProfessors with their name, show avg_difficulty.
 - "Tell me about professor X" → searchProfessors with name, show all fields.
 - You can combine: search courses first to find the instructor, then look up their RMP rating.
+
+SUPERLATIVE / RANKING QUERIES — THIS IS CRITICAL:
+When the user asks for "best", "highest", "top", "worst", "lowest", "easiest", "hardest", etc:
+- NEVER filter for an exact value (like minRating: 5). Instead, SORT and return the top results.
+- "best rated professor teaching this fall" → use findRatedInstructors with sortBy "rating_desc"
+- "hardest professor teaching this fall" → use findRatedInstructors with sortBy "difficulty_desc"
+- "easiest CS professor" → use findRatedInstructors with department "Computer Science", sortBy "difficulty_asc"
+- "best rated professor" (without mentioning courses) → use searchProfessors with sortBy "rating_desc"
+- "highest rated course" → searchCourses with hasEvaluations: true, then pick the one with highest overall_quality.
+- Use findRatedInstructors whenever the query combines professor ratings with teaching status. It does the join for you in one call.
 
 Always be conversational and helpful. If the user's query is ambiguous, ask clarifying questions.`,
   tools: {
@@ -81,6 +90,7 @@ Always be conversational and helpful. If the user's query is ambiguous, ask clar
     viewSchedule,
     clearMySchedule,
     searchProfessors,
+    findRatedInstructors,
   },
 });
 
