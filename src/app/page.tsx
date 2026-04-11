@@ -338,11 +338,14 @@ export default function Home() {
                       onClick={() => setSelected(block.course)}
                     >
                       <button
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          sendMessage({
-                            text: `Remove ${block.course.offering_name} section ${block.course.section_name} from my schedule`,
+                          await fetch("/api/schedule", {
+                            method: "DELETE",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ offering_name: block.course.offering_name, section_name: block.course.section_name }),
                           });
+                          fetchSchedule();
                           if (selected?.offering_name === block.course.offering_name && selected?.section_name === block.course.section_name) {
                             setSelected(null);
                           }
@@ -483,12 +486,15 @@ export default function Home() {
                     More details
                   </button>
                   <button
-                    onClick={() => {
-                      sendMessage({
-                        text: `Remove ${selected.offering_name} section ${selected.section_name} from my schedule`,
+                    onClick={async () => {
+                      await fetch("/api/schedule", {
+                        method: "DELETE",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ offering_name: selected.offering_name, section_name: selected.section_name }),
                       });
                       setSelected(null);
                       setProfRatings(null);
+                      fetchSchedule();
                     }}
                     className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
                   >
@@ -560,17 +566,8 @@ export default function Home() {
                     );
                   }
                   if (isToolUIPart(part)) {
-                    if (part.state === "output-available") {
-                      return (
-                        <div
-                          key={i}
-                          className="flex items-center gap-1.5 text-[11px] text-emerald-500 py-0.5"
-                        >
-                          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 12.5l-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4z"/></svg>
-                          Done
-                        </div>
-                      );
-                    }
+                    // Only show indicator while actively running, not after completion
+                    if (part.state === "output-available") return null;
                     return (
                       <div
                         key={i}
