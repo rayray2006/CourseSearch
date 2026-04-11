@@ -150,8 +150,9 @@ function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCourses }: 
       // e.g. "EN.601.226 Data Structures" or "EN.601.226</strong> Data Structures"
       let endIdx = idx + match[0].length;
       const rest = html.slice(endIdx);
-      // Grab trailing text up to next <br/>, <div, another course code, or "Section"
-      const nameMatch = rest.match(/^((?:\s+(?!Section\b)[A-Za-z][\w&:,/\-–—'()]*)*)/);
+      // Grab trailing text: course name up to next <br/>, HTML tag, another course code, or "Section"
+      // Must handle HTML entities (&amp;), hyphens, colons, parens, etc.
+      const nameMatch = rest.match(/^((?:\s+(?!Section\s)(?!<)(?![A-Z]{2}\.\d{3}\.\d{3})(?:&amp;|&lt;|&gt;|[^\s<])+)*)/);
       const trailingName = nameMatch ? nameMatch[0] : "";
       endIdx += trailingName.length;
       parts.push({ type: "code", text: html.slice(idx, endIdx), value: match[1] });
