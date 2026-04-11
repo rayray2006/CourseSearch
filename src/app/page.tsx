@@ -249,7 +249,7 @@ function splitPrerequisites(raw: string): { restrictions: string[]; prereqs: str
 // ===================== COMPONENT =====================
 
 export default function Home() {
-  const { messages, sendMessage, status, error } = useChat<CourseAgentUIMessage>({
+  const { messages, sendMessage, setMessages, status, error } = useChat<CourseAgentUIMessage>({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
   });
 
@@ -885,10 +885,19 @@ export default function Home() {
       {/* ---- RIGHT: Chat ---- */}
       <aside className="w-[380px] shrink-0 border-l border-slate-200 bg-white flex flex-col">
         {/* Chat header — aligned with left top bar */}
-        <div className="flex items-center px-5 py-3 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
           <p className="text-base font-semibold text-slate-900 tracking-tight">
             Course Assistant
           </p>
+          {messages.length > 0 && (
+            <button
+              onClick={() => setMessages([])}
+              className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+              title="Clear chat"
+            >
+              Clear
+            </button>
+          )}
         </div>
 
         {/* Messages */}
