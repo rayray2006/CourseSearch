@@ -5,15 +5,8 @@ const BASE_URL = "https://sis.jhu.edu/api/classes";
 const TERM = "Fall 2026";
 
 const SCHOOLS = [
-  "Bloomberg School of Public Health",
-  "Carey Business School",
   "Krieger School of Arts and Sciences",
   "Krieger School of Arts and Sciences Advanced Academic Programs",
-  "Nitze School of Advanced International Studies",
-  "School of Education",
-  "School of Medicine",
-  "School of Nursing",
-  "The Peabody Institute",
   "Whiting School of Engineering",
   "Whiting School of Engineering for Professionals",
 ];
