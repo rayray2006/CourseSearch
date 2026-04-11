@@ -1,8 +1,9 @@
-import { ToolLoopAgent, InferAgentUIMessage, gateway } from "ai";
+import { ToolLoopAgent, InferAgentUIMessage } from "ai";
+import { google } from "@ai-sdk/google";
 import { searchCourses, getCourseStats } from "../tools/search-courses";
 
 export const courseAgent = new ToolLoopAgent({
-  model: gateway("anthropic/claude-sonnet-4.5"),
+  model: google("gemini-2.5-flash"),
   instructions: `You are a helpful JHU course advisor for Fall 2026. You help students find courses that match their interests, schedule, and requirements.
 
 When a user asks about courses:
