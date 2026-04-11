@@ -96,12 +96,6 @@ export const searchCourses = tool({
       .describe(
         "Search within prerequisites text, e.g. a course number like 'EN.601.226' or keyword like 'calculus'. Finds courses that require a specific prerequisite."
       ),
-    includeProfessional: z
-      .boolean()
-      .optional()
-      .describe(
-        "If true, include 'for Professionals' school courses. Default is false — professional school courses are excluded by default."
-      ),
   }),
   execute: async (input) => {
     const db = getDb();
@@ -204,11 +198,6 @@ export const searchCourses = tool({
         conditions.push(`prerequisites LIKE @${paramName}`);
         params[paramName] = `%${word}%`;
       });
-    }
-
-    // Exclude "for Professionals" schools by default
-    if (!input.includeProfessional) {
-      conditions.push("school_name NOT LIKE '%for Professionals%'");
     }
 
     const where =
