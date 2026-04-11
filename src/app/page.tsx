@@ -22,9 +22,24 @@ interface ScheduledCourse {
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const HOURS = Array.from({ length: 14 }, (_, i) => i + 8); // 8 AM to 9 PM
 
-function parseMeetings(meetings: string): { days: number[]; startHour: number; startMin: number; endHour: number; endMin: number } | null {
-  if (!meetings || meetings === "TBA") return null;
-  const match = meetings.match(/^(\S+)\s+(\d{1,2}):(\d{2})(AM|PM)\s*-\s*(\d{1,2}):(\d{2})(AM|PM)$/);
+interface MeetingBlock {
+  days: number[];
+  startHour: number;
+  startMin: number;
+  endHour: number;
+  endMin: number;
+}
+
+const DAY_MAP: Record<string, number[]> = {
+  M: [0], T: [1], W: [2], Th: [3], F: [4], Sa: [5], S: [6],
+  MW: [0, 2], MF: [0, 4], MWF: [0, 2, 4], TTh: [1, 3],
+  MT: [0, 1], MTW: [0, 1, 2], TWTh: [1, 2, 3], WF: [2, 4],
+  TF: [1, 4], ThF: [3, 4],
+  TWThF: [1, 2, 3, 4], MTWThF: [0, 1, 2, 3, 4], MTThF: [0, 1, 3, 4],
+};
+
+function parseSingleMeeting(part: string): MeetingBlock | null {
+  const match = part.trim().match(/^(\S+)\s+(\d{1,2}):(\d{2})(AM|PM)\s*-\s*(\d{1,2}):(\d{2})(AM|PM)$/);
   if (!match) return null;
 
   const [, dayStr, sh, sm, sap, eh, em, eap] = match;
@@ -38,18 +53,22 @@ function parseMeetings(meetings: string): { days: number[]; startHour: number; s
   if (eap === "PM" && endHour !== 12) endHour += 12;
   if (eap === "AM" && endHour === 12) endHour = 0;
 
-  const dayMap: Record<string, number[]> = {
-    M: [0], T: [1], W: [2], Th: [3], F: [4], Sa: [5], S: [6],
-    MW: [0, 2], MF: [0, 4], MWF: [0, 2, 4], TTh: [1, 3],
-    MT: [0, 1], MTW: [0, 1, 2], TWTh: [1, 2, 3], WF: [2, 4],
-    TF: [1, 4], ThF: [3, 4],
-    TWThF: [1, 2, 3, 4], MTWThF: [0, 1, 2, 3, 4], MTThF: [0, 1, 3, 4],
-  };
-
-  const days = dayMap[dayStr];
+  const days = DAY_MAP[dayStr];
   if (!days) return null;
 
   return { days, startHour, startMin, endHour, endMin };
+}
+
+function parseMeetings(meetings: string): MeetingBlock[] {
+  if (!meetings || meetings === "TBA") return [];
+  // Split on comma for multi-part meetings like "T 1:30PM - 4:15PM, Th 1:30PM - 4:15PM"
+  const parts = meetings.split(",");
+  const blocks: MeetingBlock[] = [];
+  for (const part of parts) {
+    const parsed = parseSingleMeeting(part);
+    if (parsed) blocks.push(parsed);
+  }
+  return blocks;
 }
 
 const COLORS = [
@@ -177,22 +196,24 @@ export default function Home() {
                     }[] = [];
 
                     schedule.forEach((course) => {
-                      const parsed = parseMeetings(course.meetings);
-                      if (!parsed) return;
+                      const meetingBlocks = parseMeetings(course.meetings);
+                      if (meetingBlocks.length === 0) return;
                       const color =
                         colorMap.get(
                           `${course.offering_name}::${course.section_name}`
                         ) || COLORS[0];
 
-                      parsed.days.forEach((dayIdx) => {
-                        if (dayIdx > 4) return;
-                        const topOffset =
-                          (parsed.startHour - 8) * 48 +
-                          (parsed.startMin / 60) * 48;
-                        const height =
-                          (parsed.endHour - parsed.startHour) * 48 +
-                          ((parsed.endMin - parsed.startMin) / 60) * 48;
-                        blocks.push({ course, dayIdx, topOffset, height, color });
+                      meetingBlocks.forEach((mb) => {
+                        mb.days.forEach((dayIdx) => {
+                          if (dayIdx > 4) return;
+                          const topOffset =
+                            (mb.startHour - 8) * 48 +
+                            (mb.startMin / 60) * 48;
+                          const height =
+                            (mb.endHour - mb.startHour) * 48 +
+                            ((mb.endMin - mb.startMin) / 60) * 48;
+                          blocks.push({ course, dayIdx, topOffset, height, color });
+                        });
                       });
                     });
 
