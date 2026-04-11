@@ -12,7 +12,9 @@ export const searchCourses = tool({
     department: z
       .string()
       .optional()
-      .describe("Department name or partial match, e.g. 'Computer Science'"),
+      .describe(
+        "Department name or partial match, e.g. 'Computer Science'. Note: departments are prefixed with school code like 'EN Computer Science', 'PE Computer Science', 'PY Computer Music'. Be specific to avoid cross-department matches."
+      ),
     school: z
       .string()
       .optional()
@@ -20,19 +22,28 @@ export const searchCourses = tool({
         "School name or partial match, e.g. 'Whiting' or 'Krieger' or 'Bloomberg'"
       ),
     level: z
-      .string()
+      .enum([
+        "Lower Level Undergraduate",
+        "Upper Level Undergraduate",
+        "Graduate",
+        "Graduate Independent Academic Work",
+        "Independent Academic Work",
+        "Doctoral",
+        "Post-Doctoral",
+        "PostDoctoral",
+      ])
       .optional()
-      .describe(
-        "Course level: 'Lower Level Undergraduate', 'Upper Level Undergraduate', 'Graduate', etc."
-      ),
+      .describe("Course level — use the exact value"),
     credits: z
       .string()
       .optional()
-      .describe("Credit amount, e.g. '3.00' or '4.00'"),
+      .describe(
+        "Credit amount, e.g. '3.00'. Matches both exact credits and range credits that include this value (e.g. '3.00' matches '3.00' and '1.00 - 4.00')"
+      ),
     instructor: z
       .string()
       .optional()
-      .describe("Instructor name (partial match)"),
+      .describe("Instructor last name or partial match"),
     daysOfWeek: z
       .string()
       .optional()
@@ -40,25 +51,29 @@ export const searchCourses = tool({
         "Day pattern that starts the meetings field, e.g. 'MWF', 'TTh', 'MW', 'M', 'F'. This matches the EXACT day prefix — 'M' means ONLY Monday, 'MWF' means Mon/Wed/Fri. Available patterns: M, T, W, Th, F, Sa, S, MW, MF, MWF, TTh, TWThF, MTWThF, etc."
       ),
     timeOfDay: z
-      .string()
+      .enum(["Morning", "Afternoon", "Evening", "Other"])
       .optional()
-      .describe("'Morning', 'Afternoon', 'Evening', or 'Other'"),
-    isOpen: z
-      .boolean()
+      .describe("Time of day filter"),
+    status: z
+      .enum(["Open", "Closed", "Waitlist Only", "Canceled", "Approval Required", "Reserved Open"])
       .optional()
-      .describe("If true, only return courses with Status = 'Open'"),
+      .describe("Course status — use exact value. 'Open' means seats available, 'Reserved Open' is different from 'Open'."),
     writingIntensive: z
       .boolean()
       .optional()
       .describe("If true, only return writing intensive courses"),
     instructionMethod: z
-      .string()
+      .enum(["in-person", "online", "blended"])
       .optional()
-      .describe("'In-person', 'Online', or 'Hybrid'"),
+      .describe(
+        "Instruction method: 'in-person', 'online' (includes On-line, Online - Asynchronous, Online - Synchronous), or 'blended' (hybrid)"
+      ),
     areas: z
       .string()
       .optional()
-      .describe("Distribution area keyword, e.g. 'Quantitative', 'Humanities'"),
+      .describe(
+        "Distribution area keyword, e.g. 'Science and Data', 'Ethics and Foundations', 'Writing and Communication', 'Citizens and Society', 'Culture and Aesthetics', 'Creative Expression', 'Democracy', 'Engagement with Society'"
+      ),
     courseNumber: z
       .string()
       .optional()
@@ -82,11 +97,16 @@ export const searchCourses = tool({
       params.school = `%${input.school}%`;
     }
     if (input.level) {
-      conditions.push("level LIKE @level");
-      params.level = `%${input.level}%`;
+      // Exact match to avoid "Graduate" matching "Graduate Independent Academic Work"
+      conditions.push("level = @level");
+      params.level = input.level;
     }
     if (input.credits) {
-      conditions.push("credits = @credits");
+      // Match exact credits OR ranges that include this value
+      // e.g. '3.00' matches credits='3.00' and credits='1.00 - 4.00'
+      conditions.push(
+        "(credits = @credits OR (credits LIKE '%-%' AND CAST(SUBSTR(credits, 1, INSTR(credits, ' -') - 1) AS REAL) <= CAST(@credits AS REAL) AND CAST(SUBSTR(credits, INSTR(credits, '- ') + 2) AS REAL) >= CAST(@credits AS REAL)))"
+      );
       params.credits = input.credits;
     }
     if (input.instructor) {
@@ -102,15 +122,24 @@ export const searchCourses = tool({
       conditions.push("time_of_day = @timeOfDay");
       params.timeOfDay = input.timeOfDay;
     }
-    if (input.isOpen) {
-      conditions.push("status = 'Open'");
+    if (input.status) {
+      // Exact match to avoid "Open" matching "Reserved Open"
+      conditions.push("status = @status");
+      params.status = input.status;
     }
     if (input.writingIntensive) {
       conditions.push("is_writing_intensive = 'Yes'");
     }
     if (input.instructionMethod) {
-      conditions.push("instruction_method LIKE @instructionMethod");
-      params.instructionMethod = `%${input.instructionMethod}%`;
+      // Normalize the messy instruction_method field
+      const method = input.instructionMethod.toLowerCase();
+      if (method === "in-person") {
+        conditions.push("(LOWER(instruction_method) LIKE '%in-person%' OR LOWER(instruction_method) = 'lecture')");
+      } else if (method === "online") {
+        conditions.push("(LOWER(instruction_method) LIKE '%on-line%' OR LOWER(instruction_method) LIKE '%online%')");
+      } else if (method === "blended") {
+        conditions.push("LOWER(instruction_method) LIKE '%blended%'");
+      }
     }
     if (input.areas) {
       conditions.push("areas LIKE @areas");
