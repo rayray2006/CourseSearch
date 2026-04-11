@@ -37,7 +37,7 @@ export const searchCourses = tool({
       .string()
       .optional()
       .describe(
-        "Day pattern in meetings field, e.g. 'MWF', 'TTh', 'MW', 'F'"
+        "Day pattern that starts the meetings field, e.g. 'MWF', 'TTh', 'MW', 'M', 'F'. This matches the EXACT day prefix — 'M' means ONLY Monday, 'MWF' means Mon/Wed/Fri. Available patterns: M, T, W, Th, F, Sa, S, MW, MF, MWF, TTh, TWThF, MTWThF, etc."
       ),
     timeOfDay: z
       .string()
@@ -94,8 +94,9 @@ export const searchCourses = tool({
       params.instructor = `%${input.instructor}%`;
     }
     if (input.daysOfWeek) {
+      // Match the exact day prefix: "M 4:30PM..." not "MWF 10:00AM..."
       conditions.push("meetings LIKE @daysOfWeek");
-      params.daysOfWeek = `%${input.daysOfWeek}%`;
+      params.daysOfWeek = `${input.daysOfWeek} %`;
     }
     if (input.timeOfDay) {
       conditions.push("time_of_day = @timeOfDay");
