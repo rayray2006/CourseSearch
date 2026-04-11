@@ -96,6 +96,12 @@ export const searchCourses = tool({
       .describe(
         "Search within prerequisites text, e.g. a course number like 'EN.601.226' or keyword like 'calculus'. Finds courses that require a specific prerequisite."
       ),
+    includeProfessional: z
+      .boolean()
+      .optional()
+      .describe(
+        "If true, include 'for Professionals' school courses. Default is false — professional school courses are excluded by default."
+      ),
   }),
   execute: async (input) => {
     const db = getDb();
@@ -200,6 +206,11 @@ export const searchCourses = tool({
       });
     }
 
+    // Exclude "for Professionals" schools by default
+    if (!input.includeProfessional) {
+      conditions.push("school_name NOT LIKE '%for Professionals%'");
+    }
+
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -215,10 +226,43 @@ export const searchCourses = tool({
       LIMIT 20
     `;
 
-    const rows = db.prepare(sql).all(params);
+    const rows = db.prepare(sql).all(params) as Record<string, string>[];
+
+    // Resolve course codes in prerequisites to include course names
+    const codePattern = /[A-Z]{2}\.\d{3}\.\d{3}/g;
+    const resolvedRows = rows.map((row) => {
+      if (row.prerequisites) {
+        const codes = [...new Set(row.prerequisites.match(codePattern) || [])];
+        if (codes.length > 0) {
+          const placeholders = codes.map(() => "?").join(",");
+          const titleRows = db
+            .prepare(
+              `SELECT DISTINCT offering_name, title FROM courses WHERE offering_name IN (${placeholders})`
+            )
+            .all(...codes) as { offering_name: string; title: string }[];
+          const titleMap = new Map(
+            titleRows.map((r) => [r.offering_name, r.title])
+          );
+
+          let resolved = row.prerequisites;
+          for (const code of codes) {
+            const name = titleMap.get(code);
+            if (name) {
+              resolved = resolved.replace(
+                new RegExp(code.replace(/\./g, "\\."), "g"),
+                `${code} (${name})`
+              );
+            }
+          }
+          return { ...row, prerequisites: resolved };
+        }
+      }
+      return row;
+    });
+
     return {
-      count: rows.length,
-      courses: rows,
+      count: resolvedRows.length,
+      courses: resolvedRows,
     };
   },
 });
