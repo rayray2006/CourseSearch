@@ -104,15 +104,18 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [schedule, setSchedule] = useState<ScheduledCourse[]>([]);
   const [selected, setSelected] = useState<ScheduledCourse | null>(null);
-  const [profRating, setProfRating] = useState<{
-    first_name: string;
-    last_name: string;
-    department: string;
-    avg_rating: number;
-    avg_difficulty: number;
-    num_ratings: number;
-    would_take_again_pct: number | null;
-  } | null | "loading" | "none">(null);
+  interface ProfRatingResult {
+    name: string;
+    rating: {
+      first_name: string;
+      last_name: string;
+      avg_rating: number;
+      avg_difficulty: number;
+      num_ratings: number;
+      would_take_again_pct: number | null;
+    } | null;
+  }
+  const [profRatings, setProfRatings] = useState<ProfRatingResult[] | "loading" | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -139,7 +142,7 @@ export default function Home() {
     function handleClick(e: MouseEvent) {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         setSelected(null);
-        setProfRating(null);
+        setProfRatings(null);
       }
     }
     // Delay to avoid the click that opened the panel from immediately closing it
@@ -150,16 +153,16 @@ export default function Home() {
     };
   }, [selected]);
 
-  // Fetch professor rating when a course is selected
+  // Fetch professor ratings when a course is selected
   useEffect(() => {
-    if (!selected) { setProfRating(null); return; }
+    if (!selected) { setProfRatings(null); return; }
     const name = selected.instructors_full_name;
-    if (!name || name === "Staff") { setProfRating("none"); return; }
-    setProfRating("loading");
+    if (!name || name === "Staff") { setProfRatings([]); return; }
+    setProfRatings("loading");
     fetch(`/api/professor?name=${encodeURIComponent(name)}`)
       .then((r) => r.json())
-      .then((data) => setProfRating(data || "none"))
-      .catch(() => setProfRating("none"));
+      .then((data: ProfRatingResult[]) => setProfRatings(data))
+      .catch(() => setProfRatings([]));
   }, [selected]);
 
   const isLoading = status === "submitted" || status === "streaming";
@@ -387,7 +390,7 @@ export default function Home() {
                     </h3>
                   </div>
                   <button
-                    onClick={() => { setSelected(null); setProfRating(null); }}
+                    onClick={() => { setSelected(null); setProfRatings(null); }}
                     className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors text-xs"
                   >
                     &#10005;
@@ -424,37 +427,44 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Professor rating inline */}
+                {/* Professor ratings inline */}
                 <div className="mt-3 pt-3 border-t border-slate-100">
                   <span className="text-[11px] text-slate-400">RateMyProfessors</span>
-                  <div className="mt-1 text-[12px]">
-                    {profRating === "loading" && (
+                  <div className="mt-1 text-[12px] space-y-1.5">
+                    {profRatings === "loading" && (
                       <span className="text-slate-400">Loading...</span>
                     )}
-                    {profRating === "none" && (
+                    {Array.isArray(profRatings) && profRatings.length === 0 && (
                       <span className="text-slate-400">N/A — no ratings found</span>
                     )}
-                    {profRating !== null && profRating !== "loading" && profRating !== "none" && (
-                      <div className="flex items-center gap-4 text-slate-700">
-                        <span>
-                          <span className="font-semibold">{profRating.avg_rating.toFixed(1)}</span>
-                          <span className="text-slate-400">/5 rating</span>
-                        </span>
-                        <span>
-                          <span className="font-semibold">{profRating.avg_difficulty.toFixed(1)}</span>
-                          <span className="text-slate-400">/5 difficulty</span>
-                        </span>
-                        {profRating.would_take_again_pct !== null && profRating.would_take_again_pct >= 0 && (
-                          <span>
-                            <span className="font-semibold">{Math.round(profRating.would_take_again_pct)}%</span>
-                            <span className="text-slate-400"> would retake</span>
-                          </span>
+                    {Array.isArray(profRatings) && profRatings.map((pr) => (
+                      <div key={pr.name} className="flex items-center gap-4 text-slate-700">
+                        <span className="font-medium text-slate-500 min-w-[100px] truncate">{pr.name.split(",").reverse().map(s => s.trim()).join(" ")}</span>
+                        {pr.rating ? (
+                          <>
+                            <span>
+                              <span className="font-semibold">{pr.rating.avg_rating.toFixed(1)}</span>
+                              <span className="text-slate-400">/5</span>
+                            </span>
+                            <span>
+                              <span className="font-semibold">{pr.rating.avg_difficulty.toFixed(1)}</span>
+                              <span className="text-slate-400"> diff</span>
+                            </span>
+                            {pr.rating.would_take_again_pct !== null && pr.rating.would_take_again_pct >= 0 && (
+                              <span>
+                                <span className="font-semibold">{Math.round(pr.rating.would_take_again_pct)}%</span>
+                                <span className="text-slate-400"> retake</span>
+                              </span>
+                            )}
+                            <span className="text-slate-400 text-[11px]">
+                              ({pr.rating.num_ratings})
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-slate-400">N/A</span>
                         )}
-                        <span className="text-slate-400 text-[11px]">
-                          ({profRating.num_ratings} rating{profRating.num_ratings !== 1 && "s"})
-                        </span>
                       </div>
-                    )}
+                    ))}
                   </div>
                 </div>
 
@@ -466,7 +476,7 @@ export default function Home() {
                         text: `Tell me more about ${selected.offering_name}, including description and prerequisites`,
                       });
                       setSelected(null);
-                      setProfRating(null);
+                      setProfRatings(null);
                     }}
                     className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
                   >
@@ -478,7 +488,7 @@ export default function Home() {
                         text: `Remove ${selected.offering_name} section ${selected.section_name} from my schedule`,
                       });
                       setSelected(null);
-                      setProfRating(null);
+                      setProfRatings(null);
                     }}
                     className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
                   >
@@ -550,7 +560,17 @@ export default function Home() {
                     );
                   }
                   if (isToolUIPart(part)) {
-                    if (part.state === "output-available") return null;
+                    if (part.state === "output-available") {
+                      return (
+                        <div
+                          key={i}
+                          className="flex items-center gap-1.5 text-[11px] text-emerald-500 py-0.5"
+                        >
+                          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 12.5l-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4z"/></svg>
+                          Done
+                        </div>
+                      );
+                    }
                     return (
                       <div
                         key={i}
