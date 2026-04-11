@@ -204,6 +204,13 @@ function MessageContent({ html, onAdd, onPreview, onPreviewEnd }: {
           return <span key={i} dangerouslySetInnerHTML={{ __html: p.text }} />;
         }
         if (p.type === "code") {
+          const sections = codeSectionCount.get(i) || 0;
+          if (sections <= 1) {
+            // No sections or single section listed — show add button on the course name
+            const section = codeFirstSection.get(i) || "01";
+            return <strong key={i}>{p.text}{addBtn(p.value!, section)}</strong>;
+          }
+          // Multiple sections — buttons go on each section line
           return <strong key={i}>{p.text}</strong>;
         }
         if (p.type === "section") {
