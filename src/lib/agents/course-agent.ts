@@ -1,8 +1,8 @@
-import { ToolLoopAgent, InferAgentUIMessage } from "ai";
+import { ToolLoopAgent, InferAgentUIMessage, gateway } from "ai";
 import { searchCourses, getCourseStats } from "../tools/search-courses";
 
 export const courseAgent = new ToolLoopAgent({
-  model: "anthropic/claude-sonnet-4",
+  model: gateway("anthropic/claude-sonnet-4.5"),
   instructions: `You are a helpful JHU course advisor for Fall 2026. You help students find courses that match their interests, schedule, and requirements.
 
 When a user asks about courses:
