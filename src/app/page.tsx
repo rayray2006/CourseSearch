@@ -104,7 +104,17 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [schedule, setSchedule] = useState<ScheduledCourse[]>([]);
   const [selected, setSelected] = useState<ScheduledCourse | null>(null);
+  const [profRating, setProfRating] = useState<{
+    first_name: string;
+    last_name: string;
+    department: string;
+    avg_rating: number;
+    avg_difficulty: number;
+    num_ratings: number;
+    would_take_again_pct: number | null;
+  } | null | "loading" | "none">(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const fetchSchedule = useCallback(async () => {
     const res = await fetch("/api/schedule");
@@ -122,6 +132,35 @@ export default function Home() {
   useEffect(() => {
     fetchSchedule();
   }, [fetchSchedule]);
+
+  // Click outside to dismiss detail panel
+  useEffect(() => {
+    if (!selected) return;
+    function handleClick(e: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setSelected(null);
+        setProfRating(null);
+      }
+    }
+    // Delay to avoid the click that opened the panel from immediately closing it
+    const id = setTimeout(() => document.addEventListener("mousedown", handleClick), 0);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener("mousedown", handleClick);
+    };
+  }, [selected]);
+
+  // Fetch professor rating when a course is selected
+  useEffect(() => {
+    if (!selected) { setProfRating(null); return; }
+    const name = selected.instructors_full_name;
+    if (!name || name === "Staff") { setProfRating("none"); return; }
+    setProfRating("loading");
+    fetch(`/api/professor?name=${encodeURIComponent(name)}`)
+      .then((r) => r.json())
+      .then((data) => setProfRating(data || "none"))
+      .catch(() => setProfRating("none"));
+  }, [selected]);
 
   const isLoading = status === "submitted" || status === "streaming";
 
@@ -327,7 +366,10 @@ export default function Home() {
 
           {/* Course detail panel */}
           {selected && (
-            <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] z-20 animate-in slide-in-from-bottom">
+            <div
+              ref={panelRef}
+              className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] z-20"
+            >
               <div className="px-5 py-4 max-w-2xl">
                 {/* Header row */}
                 <div className="flex items-start justify-between gap-4 mb-3">
@@ -345,7 +387,7 @@ export default function Home() {
                     </h3>
                   </div>
                   <button
-                    onClick={() => setSelected(null)}
+                    onClick={() => { setSelected(null); setProfRating(null); }}
                     className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors text-xs"
                   >
                     &#10005;
@@ -382,6 +424,40 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* Professor rating inline */}
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <span className="text-[11px] text-slate-400">RateMyProfessors</span>
+                  <div className="mt-1 text-[12px]">
+                    {profRating === "loading" && (
+                      <span className="text-slate-400">Loading...</span>
+                    )}
+                    {profRating === "none" && (
+                      <span className="text-slate-400">N/A — no ratings found</span>
+                    )}
+                    {profRating !== null && profRating !== "loading" && profRating !== "none" && (
+                      <div className="flex items-center gap-4 text-slate-700">
+                        <span>
+                          <span className="font-semibold">{profRating.avg_rating.toFixed(1)}</span>
+                          <span className="text-slate-400">/5 rating</span>
+                        </span>
+                        <span>
+                          <span className="font-semibold">{profRating.avg_difficulty.toFixed(1)}</span>
+                          <span className="text-slate-400">/5 difficulty</span>
+                        </span>
+                        {profRating.would_take_again_pct !== null && profRating.would_take_again_pct >= 0 && (
+                          <span>
+                            <span className="font-semibold">{Math.round(profRating.would_take_again_pct)}%</span>
+                            <span className="text-slate-400"> would retake</span>
+                          </span>
+                        )}
+                        <span className="text-slate-400 text-[11px]">
+                          ({profRating.num_ratings} rating{profRating.num_ratings !== 1 && "s"})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Actions */}
                 <div className="mt-3 pt-3 border-t border-slate-100 flex gap-2">
                   <button
@@ -390,6 +466,7 @@ export default function Home() {
                         text: `Tell me more about ${selected.offering_name}, including description and prerequisites`,
                       });
                       setSelected(null);
+                      setProfRating(null);
                     }}
                     className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
                   >
@@ -398,20 +475,10 @@ export default function Home() {
                   <button
                     onClick={() => {
                       sendMessage({
-                        text: `What is the RMP rating for ${selected.instructors_full_name}?`,
-                      });
-                      setSelected(null);
-                    }}
-                    className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-                  >
-                    Professor rating
-                  </button>
-                  <button
-                    onClick={() => {
-                      sendMessage({
                         text: `Remove ${selected.offering_name} section ${selected.section_name} from my schedule`,
                       });
                       setSelected(null);
+                      setProfRating(null);
                     }}
                     className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
                   >
