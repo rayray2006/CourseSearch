@@ -495,16 +495,30 @@ export default function Home() {
       const others = selectedPrograms.filter((p) => p !== name);
       const othersParam = others.length > 0 ? `&others=${others.map(encodeURIComponent).join("|")}` : "";
       const res = await fetch(`/api/programs/progress?name=${encodeURIComponent(name)}${othersParam}`);
-      if (res.ok && progFetchIds.current[name] === id) {
+      if (progFetchIds.current[name] !== id) return;
+      if (res.ok) {
         const data = await res.json();
         setProgramDetails((prev) => {
           const next = { ...prev, [name]: data };
           programDetailsRef.current = next;
           return next;
         });
+      } else {
+        // Set error state so UI doesn't get stuck on "Loading..."
+        console.error(`Failed to load ${name}: ${res.status}`);
+        setProgramDetails((prev) => {
+          const next = { ...prev, [name]: { sections: [], url: null, overallStatus: "incomplete", error: true } };
+          programDetailsRef.current = next;
+          return next;
+        });
       }
-    } catch {
-      // Silently fail — user can retry
+    } catch (e) {
+      console.error(`Error loading ${name}:`, e);
+      setProgramDetails((prev) => {
+        const next = { ...prev, [name]: { sections: [], url: null, overallStatus: "incomplete", error: true } };
+        programDetailsRef.current = next;
+        return next;
+      });
     }
   }, [selectedPrograms]);
 

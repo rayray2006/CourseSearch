@@ -100,6 +100,7 @@ async function main() {
         feedback_usefulness: r.feedback_usefulness,
         num_evaluations: r.num_evaluations || 0,
         num_respondents: r.num_respondents || 0,
+        pos_tags: r.pos_tags || "",
       })
     );
   }
