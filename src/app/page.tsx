@@ -129,12 +129,13 @@ function md(text: string): string {
 const COURSE_CODE_RE = /[A-Z]{2}\.\d{3}\.\d{3}/g;
 const SECTION_RE = /Section\s+(\d{2})/g;
 
-function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCourses }: {
+function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCourses, courseSections }: {
   html: string;
   onAdd: (code: string, section: string) => void;
   onPreview: (code: string, section: string) => void;
   onPreviewEnd: () => void;
   validCourses: Set<string>;
+  courseSections: { code: string; section: string }[];
 }) {
   // Combined regex: match either a course code or a "Section NN" pattern
   const TOKEN_RE = /([A-Z]{2}\.\d{3}\.\d{3})|Section\s+(\d{2})/g;
@@ -199,6 +200,9 @@ function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCourses }: 
     >+</button>
   );
 
+  // Track which occurrence of each course code we're on, to match with courseSections order
+  const codeOccurrence = new Map<string, number>();
+
   return (
     <span>
       {parts.map((p, i) => {
@@ -206,11 +210,18 @@ function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCourses }: 
           return <span key={i} dangerouslySetInnerHTML={{ __html: p.text }} />;
         }
         if (p.type === "code") {
-          const isValid = validCourses.has(p.value!);
-          const sections = codeSectionCount.get(i) || 0;
-          if (sections <= 1 && isValid) {
-            const section = codeFirstSection.get(i) || "01";
-            return <strong key={i}>{p.text}{addBtn(p.value!, section)}</strong>;
+          const code = p.value!;
+          const isValid = validCourses.has(code);
+          const sectionCount = codeSectionCount.get(i) || 0;
+
+          // Get the correct section for this occurrence of this code
+          const occ = codeOccurrence.get(code) || 0;
+          codeOccurrence.set(code, occ + 1);
+          const matchingSections = courseSections.filter((s) => s.code === code);
+          const resolvedSection = matchingSections[occ]?.section || codeFirstSection.get(i) || "01";
+
+          if (sectionCount <= 1 && isValid) {
+            return <strong key={i}>{p.text}{addBtn(code, resolvedSection)}</strong>;
           }
           return <strong key={i}>{p.text}</strong>;
         }
@@ -266,9 +277,11 @@ export default function Home() {
   const [selected, setSelected] = useState<ScheduledCourse | null>(null);
   const [previewCourse, setPreviewCourse] = useState<ScheduledCourse | null>(null);
 
-  // Build set of valid course codes from tool outputs in messages
-  const validCourses = useMemo(() => {
+  // Build valid course codes + ordered section list from tool outputs
+  const { validCourses, courseSections } = useMemo(() => {
     const codes = new Set<string>();
+    // Ordered list of {code, section} as they appear in tool output
+    const sections: { code: string; section: string }[] = [];
     for (const msg of messages) {
       for (const part of msg.parts) {
         if ("output" in part && part.output) {
@@ -277,14 +290,17 @@ export default function Home() {
             const courses = (output.courses || output.results) as Record<string, string>[] | undefined;
             if (Array.isArray(courses)) {
               for (const c of courses) {
-                if (c.offering_name) codes.add(c.offering_name);
+                if (c.offering_name) {
+                  codes.add(c.offering_name);
+                  sections.push({ code: c.offering_name, section: c.section_name || "01" });
+                }
               }
             }
           } catch { /* ignore */ }
         }
       }
     }
-    return codes;
+    return { validCourses: codes, courseSections: sections };
   }, [messages]);
 
   // Cache fetched course data for preview hover
@@ -931,6 +947,7 @@ export default function Home() {
                         <MessageContent
                           html={md(part.text)}
                           validCourses={validCourses}
+                          courseSections={courseSections}
                           onAdd={async (code, section) => {
                             await fetch("/api/schedule", {
                               method: "POST",
