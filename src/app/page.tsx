@@ -415,43 +415,7 @@ export default function Home() {
 
   const isActive = status === "submitted" || status === "streaming";
 
-  // Auto-retry logic: detect silent failures and resend seamlessly.
-  const retryCount = useRef(0);
-  const retrying = useRef(false);
-
-  // When status settles to "ready", check if we got a response. If not, retry.
-  useEffect(() => {
-    if (status !== "ready") return;
-
-    const t = setTimeout(() => {
-      const last = messages[messages.length - 1];
-      if (!last) return;
-      const hasText = last.role === "assistant" &&
-        last.parts.some((p) => p.type === "text" && p.text.trim());
-      if (hasText) { retryCount.current = 0; retrying.current = false; return; }
-      if (retryCount.current >= 2) { retryCount.current = 0; retrying.current = false; return; }
-
-      const lastUser = [...messages].reverse().find((m) => m.role === "user");
-      const text = lastUser?.parts.find((p) => p.type === "text");
-      if (text && text.type === "text") {
-        retrying.current = true;
-        retryCount.current++;
-        sendMessage({ text: text.text });
-      }
-    }, 1500);
-
-    return () => clearTimeout(t);
-  }, [status, messages, sendMessage]);
-
-  const lastMsg = messages[messages.length - 1];
-  const lastAssistantHasText = lastMsg?.role === "assistant" &&
-    lastMsg.parts.some((p) => p.type === "text" && p.text.trim());
-  // Always show loading if: actively processing, OR last message has no text yet and we're not done
-  const isLoading = isActive || (
-    messages.length > 0 &&
-    !lastAssistantHasText &&
-    !error
-  );
+  const isLoading = isActive;
 
   // Stable color assignment: hash the course key so colors don't shift on removal
   const colorOf = useCallback(
@@ -935,15 +899,6 @@ export default function Home() {
             if (message.role === "assistant") {
               const hasVisible = message.parts.some((p) => p.type === "text" && p.text.trim());
               if (!hasVisible) return null;
-            }
-            // Hide duplicate user messages created by auto-retry
-            if (retrying.current && message.role === "user" && msgIdx > 0) {
-              const prevUsers = messages.slice(0, msgIdx).filter((m) => m.role === "user");
-              const thisText = message.parts.find((p) => p.type === "text");
-              if (thisText && thisText.type === "text" && prevUsers.some((m) => {
-                const t = m.parts.find((p) => p.type === "text");
-                return t && t.type === "text" && t.text === thisText.text;
-              })) return null;
             }
             return (
             <div
