@@ -20,16 +20,21 @@ function parseMeetingTime(meetings: string): { days: string; startMin: number; e
   return { days, startMin: startH * 60 + parseInt(sm), endMin: endH * 60 + parseInt(em) };
 }
 
-const DAY_EXPAND: Record<string, string[]> = {
-  M: ["M"], T: ["T"], W: ["W"], Th: ["Th"], F: ["F"],
-  MW: ["M","W"], MF: ["M","F"], MWF: ["M","W","F"], TTh: ["T","Th"],
-  MT: ["M","T"], MTW: ["M","T","W"], WF: ["W","F"], TF: ["T","F"], ThF: ["Th","F"],
-  TWThF: ["T","W","Th","F"], MTWThF: ["M","T","W","Th","F"], MTThF: ["M","T","Th","F"],
-};
+function expandDays(dayStr: string): string[] {
+  const days: string[] = [];
+  let i = 0;
+  while (i < dayStr.length) {
+    if (dayStr[i] === "T" && dayStr[i + 1] === "h") { days.push("Th"); i += 2; }
+    else if (dayStr[i] === "S" && dayStr[i + 1] === "a") { days.push("Sa"); i += 2; }
+    else if (dayStr[i] === "S" && dayStr[i + 1] !== "a") { days.push("S"); i += 1; }
+    else { days.push(dayStr[i]); i += 1; }
+  }
+  return days;
+}
 
 function daysOverlap(a: string, b: string): boolean {
-  const aDays = DAY_EXPAND[a] || [a];
-  const bDays = DAY_EXPAND[b] || [b];
+  const aDays = expandDays(a);
+  const bDays = expandDays(b);
   return aDays.some((d) => bDays.includes(d));
 }
 

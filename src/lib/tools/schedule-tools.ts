@@ -8,12 +8,28 @@ export function setSessionId(id: string) { _sessionId = id; }
 export function getSessionId() { return _sessionId; }
 
 // --- Time parsing helpers ---
-const DAY_EXPAND: Record<string, string[]> = {
-  M: ["M"], T: ["T"], W: ["W"], Th: ["Th"], F: ["F"],
-  MW: ["M","W"], MF: ["M","F"], MWF: ["M","W","F"], TTh: ["T","Th"],
-  MT: ["M","T"], MTW: ["M","T","W"], WF: ["W","F"], TF: ["T","F"], ThF: ["Th","F"],
-  TWThF: ["T","W","Th","F"], MTWThF: ["M","T","W","Th","F"], MTThF: ["M","T","Th","F"],
-};
+// Dynamically parse day strings instead of hardcoded map
+// "MWF" -> ["M","W","F"], "TTh" -> ["T","Th"], "MTWThF" -> ["M","T","W","Th","F"]
+function expandDays(dayStr: string): string[] {
+  const days: string[] = [];
+  let i = 0;
+  while (i < dayStr.length) {
+    if (dayStr[i] === "T" && dayStr[i + 1] === "h") {
+      days.push("Th");
+      i += 2;
+    } else if (dayStr[i] === "S" && dayStr[i + 1] === "a") {
+      days.push("Sa");
+      i += 2;
+    } else if (dayStr[i] === "S" && dayStr[i + 1] !== "a") {
+      days.push("S");
+      i += 1;
+    } else {
+      days.push(dayStr[i]);
+      i += 1;
+    }
+  }
+  return days;
+}
 
 function parseMeetingTime(meetings: string): { days: string[]; startMin: number; endMin: number }[] {
   if (!meetings) return [];
@@ -27,7 +43,7 @@ function parseMeetingTime(meetings: string): { days: string[]; startMin: number;
     let endH = parseInt(eh);
     if (eap === "PM" && endH !== 12) endH += 12;
     if (eap === "AM" && endH === 12) endH = 0;
-    return { days: DAY_EXPAND[dayStr] || [dayStr], startMin: startH * 60 + parseInt(sm), endMin: endH * 60 + parseInt(em) };
+    return { days: expandDays(dayStr), startMin: startH * 60 + parseInt(sm), endMin: endH * 60 + parseInt(em) };
   }).filter((b): b is NonNullable<typeof b> => b !== null);
 }
 
