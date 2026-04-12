@@ -138,6 +138,13 @@ export const findNonConflictingCourses = tool({
       .optional()
       .describe("Course level filter"),
     titleKeyword: z.string().optional().describe("Keywords in course title"),
+    descriptionKeyword: z.string().optional().describe("Keywords in course description"),
+    writingIntensive: z.boolean().optional().describe("If true, only writing intensive courses"),
+    areas: z.string().optional().describe("Distribution area keyword, e.g. 'Science and Data', 'Ethics'"),
+    status: z.enum(["Open", "Closed", "Waitlist Only", "Approval Required"]).optional().describe("Course status"),
+    instructionMethod: z.enum(["in-person", "online", "blended"]).optional().describe("Instruction method"),
+    credits: z.string().optional().describe("Credit amount, e.g. '3.00'"),
+    daysOfWeek: z.string().optional().describe("Day pattern, e.g. 'MWF', 'TTh'. Only courses on these exact days."),
     limit: z.number().optional().describe("Max results (default 20, max 50)"),
     ignoreCourses: z
       .array(z.string())
@@ -192,7 +199,7 @@ export const findNonConflictingCourses = tool({
     // 2. Search for candidate courses
     let query = supabase
       .from("courses")
-      .select("offering_name, section_name, title, credits, department, level, status, meetings, instructors_full_name, instruction_method, overall_quality, workload")
+      .select("offering_name, section_name, title, credits, department, level, status, meetings, instructors_full_name, instruction_method, overall_quality, workload, is_writing_intensive, areas")
       .neq("status", "Canceled")
       .neq("meetings", "")
       .order("offering_name")
@@ -205,6 +212,22 @@ export const findNonConflictingCourses = tool({
       for (const word of input.titleKeyword.split(/\s+/).filter(Boolean)) {
         query = query.ilike("title", `%${word}%`);
       }
+    }
+    if (input.descriptionKeyword) {
+      for (const word of input.descriptionKeyword.split(/\s+/).filter(Boolean)) {
+        query = query.ilike("description", `%${word}%`);
+      }
+    }
+    if (input.writingIntensive) query = query.eq("is_writing_intensive", "Yes");
+    if (input.areas) query = query.ilike("areas", `%${input.areas}%`);
+    if (input.status) query = query.eq("status", input.status);
+    if (input.credits) query = query.or(`credits.eq.${input.credits},credits.ilike.%${input.credits}%`);
+    if (input.daysOfWeek) query = query.ilike("meetings", `${input.daysOfWeek} %`);
+    if (input.instructionMethod) {
+      const m = input.instructionMethod.toLowerCase();
+      if (m === "in-person") query = query.or("instruction_method.ilike.%in-person%,instruction_method.ilike.lecture");
+      else if (m === "online") query = query.or("instruction_method.ilike.%on-line%,instruction_method.ilike.%online%");
+      else if (m === "blended") query = query.ilike("instruction_method", "%blended%");
     }
 
     const { data: candidates } = await query;
