@@ -7,9 +7,12 @@ let _sessionId = "default";
 export function setSessionId(id: string) { _sessionId = id; }
 export function getSessionId() { return _sessionId; }
 
+// Active term for this request
+let _activeTerm = "Fall 2026";
+export function setActiveTerm(term: string) { _activeTerm = term; }
+export function getActiveTerm() { return _activeTerm; }
+
 // --- Time parsing helpers ---
-// Dynamically parse day strings instead of hardcoded map
-// "MWF" -> ["M","W","F"], "TTh" -> ["T","Th"], "MTWThF" -> ["M","T","W","Th","F"]
 function expandDays(dayStr: string): string[] {
   const days: string[] = [];
   let i = 0;
@@ -61,7 +64,7 @@ function hasConflict(meetingsA: string, meetingsB: string): boolean {
 }
 
 export const addCourseToSchedule = tool({
-  description: "Add a course to the user's schedule.",
+  description: "Add a course to the user's schedule for the current semester.",
   inputSchema: z.object({
     offering_name: z.string().describe("Course offering name, e.g. 'EN.601.226'"),
     section_name: z.string().describe("Section number, e.g. '01'"),
@@ -72,23 +75,24 @@ export const addCourseToSchedule = tool({
       .select("offering_name, title")
       .eq("offering_name", offering_name)
       .eq("section_name", section_name)
+      .eq("term", _activeTerm)
       .limit(1)
       .single();
 
-    if (!course) return { success: false, message: `Course ${offering_name} section ${section_name} not found.` };
+    if (!course) return { success: false, message: `Course ${offering_name} section ${section_name} not found in ${_activeTerm}.` };
 
     const { error } = await supabase.from("schedules").upsert(
-      { session_id: _sessionId, offering_name, section_name },
-      { onConflict: "session_id,offering_name,section_name" }
+      { session_id: _sessionId, offering_name, section_name, term: _activeTerm },
+      { onConflict: "session_id,offering_name,section_name,term" }
     );
 
     if (error) return { success: false, message: error.message };
-    return { success: true, message: `Added ${offering_name} (${course.title}) section ${section_name} to your schedule.` };
+    return { success: true, message: `Added ${offering_name} (${course.title}) section ${section_name} to your ${_activeTerm} schedule.` };
   },
 });
 
 export const removeCourseFromSchedule = tool({
-  description: "Remove a course from the user's schedule.",
+  description: "Remove a course from the user's schedule for the current semester.",
   inputSchema: z.object({
     offering_name: z.string().describe("Course offering name"),
     section_name: z.string().describe("Section number"),
@@ -99,23 +103,25 @@ export const removeCourseFromSchedule = tool({
       .delete()
       .eq("session_id", _sessionId)
       .eq("offering_name", offering_name)
-      .eq("section_name", section_name);
+      .eq("section_name", section_name)
+      .eq("term", _activeTerm);
 
-    if (count === 0) return { success: false, message: `${offering_name} section ${section_name} is not in your schedule.` };
-    return { success: true, message: `Removed ${offering_name} section ${section_name} from your schedule.` };
+    if (count === 0) return { success: false, message: `${offering_name} section ${section_name} is not in your ${_activeTerm} schedule.` };
+    return { success: true, message: `Removed ${offering_name} section ${section_name} from your ${_activeTerm} schedule.` };
   },
 });
 
 export const viewSchedule = tool({
-  description: "View all courses currently in the user's schedule.",
+  description: "View all courses currently in the user's schedule for the current semester.",
   inputSchema: z.object({}),
   execute: async () => {
     const { data: scheduleRows } = await supabase
       .from("schedules")
       .select("offering_name, section_name")
-      .eq("session_id", _sessionId);
+      .eq("session_id", _sessionId)
+      .eq("term", _activeTerm);
 
-    if (!scheduleRows || scheduleRows.length === 0) return { courses: [], message: "Your schedule is empty." };
+    if (!scheduleRows || scheduleRows.length === 0) return { courses: [], message: `Your ${_activeTerm} schedule is empty.` };
 
     const orFilter = scheduleRows
       .map((r) => `and(offering_name.eq.${r.offering_name},section_name.eq.${r.section_name})`)
@@ -124,6 +130,7 @@ export const viewSchedule = tool({
     const { data: courses } = await supabase
       .from("courses")
       .select("offering_name, section_name, title, credits, meetings, instructors_full_name")
+      .eq("term", _activeTerm)
       .or(orFilter);
 
     const totalCredits = (courses || []).reduce((sum, c) => {
@@ -131,16 +138,16 @@ export const viewSchedule = tool({
       return sum + (isNaN(n) ? 0 : n);
     }, 0);
 
-    return { courses: courses || [], totalCredits, count: (courses || []).length };
+    return { courses: courses || [], totalCredits, count: (courses || []).length, term: _activeTerm };
   },
 });
 
 export const clearMySchedule = tool({
-  description: "Clear all courses from the user's schedule. Ask for confirmation first.",
+  description: "Clear all courses from the user's schedule for the current semester. Ask for confirmation first.",
   inputSchema: z.object({}),
   execute: async () => {
-    await supabase.from("schedules").delete().eq("session_id", _sessionId);
-    return { success: true, message: "Schedule cleared." };
+    await supabase.from("schedules").delete().eq("session_id", _sessionId).eq("term", _activeTerm);
+    return { success: true, message: `${_activeTerm} schedule cleared.` };
   },
 });
 
@@ -162,40 +169,41 @@ export const findNonConflictingCourses = tool({
     credits: z.string().optional().describe("Credit amount, e.g. '3.00'"),
     daysOfWeek: z.string().optional().describe("Day pattern, e.g. 'MWF', 'TTh'. Only courses on these exact days."),
     timeOfDay: z.enum(["Morning", "Afternoon", "Evening", "Other"]).optional().describe("Time of day bucket."),
-    beforeTime: z.string().optional().describe("Only courses that END before this time, e.g. '12:00PM', '3:00PM'. Use for 'before noon' → '12:00PM', 'before 2pm' → '2:00PM'."),
-    afterTime: z.string().optional().describe("Only courses that START at or after this time, e.g. '12:00PM', '5:00PM'. Use for 'after noon' → '12:00PM', 'evening classes' → '5:00PM'."),
+    beforeTime: z.string().optional().describe("Only courses that END before this time, e.g. '12:00PM', '3:00PM'."),
+    afterTime: z.string().optional().describe("Only courses that START at or after this time, e.g. '12:00PM', '5:00PM'."),
     limit: z.number().optional().describe("Max results (default 20, max 50)"),
     ignoreCourses: z
       .array(z.string())
       .optional()
       .describe(
-        "Course offering_names to IGNORE from the schedule when checking conflicts. Use for hypothetical questions like 'what if I dropped EN.601.433' — pass ['EN.601.433'] to exclude it from conflict checking without actually removing it."
+        "Course offering_names to IGNORE from the schedule when checking conflicts. Use for hypothetical questions like 'what if I dropped EN.601.433'."
       ),
     extraMeetings: z
       .array(z.string())
       .optional()
       .describe(
-        "Extra meeting times to treat as busy (in addition to the schedule). Format: 'TTh 1:30PM - 2:45PM'. Use for hypothetical questions like 'what fits if I also have a meeting TTh 3-4'."
+        "Extra meeting times to treat as busy. Format: 'TTh 1:30PM - 2:45PM'."
       ),
   }),
   execute: async (input) => {
-    // 1. Get user's current schedule
+    // 1. Get user's current schedule for this term
     const { data: scheduleRows } = await supabase
       .from("schedules")
       .select("offering_name, section_name")
-      .eq("session_id", _sessionId);
+      .eq("session_id", _sessionId)
+      .eq("term", _activeTerm);
 
     if (!scheduleRows || scheduleRows.length === 0) {
       return { error: "Your schedule is empty. Add courses first, then search for non-conflicting ones." };
     }
 
-    // Get meeting times for scheduled courses
     const orFilter = scheduleRows
       .map((r) => `and(offering_name.eq.${r.offering_name},section_name.eq.${r.section_name})`)
       .join(",");
     const { data: scheduledCourses } = await supabase
       .from("courses")
       .select("offering_name, meetings")
+      .eq("term", _activeTerm)
       .or(orFilter);
 
     const ignoreCodes = new Set(input.ignoreCourses || []);
@@ -204,7 +212,6 @@ export const findNonConflictingCourses = tool({
       .map((c) => c.meetings)
       .filter(Boolean) as string[];
 
-    // Add any extra hypothetical busy times
     if (input.extraMeetings) {
       scheduledMeetings.push(...input.extraMeetings);
     }
@@ -215,15 +222,16 @@ export const findNonConflictingCourses = tool({
         .map((r) => r.offering_name)
     );
 
-    // 2. Search for candidate courses
+    // 2. Search for candidate courses in current term
     let query = supabase
       .from("courses")
       .select("offering_name, section_name, title, credits, department, level, status, meetings, instructors_full_name, instruction_method, overall_quality, workload, is_writing_intensive, areas")
+      .eq("term", _activeTerm)
       .neq("status", "Canceled")
       .neq("meetings", "")
       .order("offering_name")
       .order("section_name")
-      .limit(200); // fetch more to filter client-side
+      .limit(200);
 
     if (input.department) query = query.or(`all_departments.ilike.%${input.department}%,department.ilike.%${input.department}%`);
     if (input.level) query = query.eq("level", input.level);
@@ -253,7 +261,6 @@ export const findNonConflictingCourses = tool({
     const { data: candidates } = await query;
     if (!candidates || candidates.length === 0) return { count: 0, courses: [] };
 
-    // Parse beforeTime/afterTime into minutes for client-side filtering
     function parseTimeToMin(t: string): number | null {
       const m = t.match(/^(\d{1,2}):(\d{2})(AM|PM)$/);
       if (!m) return null;
@@ -265,14 +272,13 @@ export const findNonConflictingCourses = tool({
     const beforeMin = input.beforeTime ? parseTimeToMin(input.beforeTime) : null;
     const afterMin = input.afterTime ? parseTimeToMin(input.afterTime) : null;
 
-    // 3. Filter out conflicts, already-scheduled courses, and time constraints
+    // 3. Filter out conflicts
     const maxResults = Math.min(input.limit || 20, 50);
     const nonConflicting = candidates.filter((course) => {
       if (scheduledCodes.has(course.offering_name)) return false;
       if (!course.meetings) return false;
       if (scheduledMeetings.some((sm) => hasConflict(sm, course.meetings))) return false;
 
-      // Time range filter: check ALL meeting parts
       if (beforeMin !== null || afterMin !== null) {
         const blocks = parseMeetingTime(course.meetings);
         if (blocks.length === 0) return false;

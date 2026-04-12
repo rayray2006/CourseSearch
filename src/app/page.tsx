@@ -3,7 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { isToolUIPart } from "ai";
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from "react";
 import type { CourseAgentUIMessage } from "@/lib/agents/course-agent";
 
 interface ScheduledCourse {
@@ -260,9 +260,82 @@ function splitPrerequisites(raw: string): { restrictions: string[]; prereqs: str
 
 // ===================== COMPONENT =====================
 
+interface TermInfo {
+  term: string;
+  sort_order: number;
+  has_sis_data: boolean;
+  course_count: number;
+  is_current: boolean;
+}
+
 export default function Home() {
+  const [activeTerm, setActiveTermState] = useState("Fall 2026");
+  const [availableTerms, setAvailableTerms] = useState<TermInfo[]>([]);
+  const hasSisData = availableTerms.find((t) => t.term === activeTerm)?.has_sis_data ?? true;
+  const isCurrentTerm = availableTerms.find((t) => t.term === activeTerm)?.is_current ?? false;
+  const isPastTerm = hasSisData && !isCurrentTerm;
+  const showCalendar = isCurrentTerm; // only current term gets the calendar grid
+
+  // Enrollment period — filters which terms show in dropdown (persisted)
+  const [enrollStart, setEnrollStart] = useState(() => {
+    if (typeof window !== "undefined") return localStorage.getItem("jhu_enrollStart") || "F24";
+    return "F24";
+  });
+  const [enrollEnd, setEnrollEnd] = useState(() => {
+    if (typeof window !== "undefined") return localStorage.getItem("jhu_enrollEnd") || "S27";
+    return "S27";
+  });
+  useEffect(() => { localStorage.setItem("jhu_enrollStart", enrollStart); }, [enrollStart]);
+  useEffect(() => { localStorage.setItem("jhu_enrollEnd", enrollEnd); }, [enrollEnd]);
+
+  // Parse "F24" → { season: "Fall", year: 2024, sort: N } or "S27" → { season: "Spring", year: 2027 }
+  const parseEnrollCode = useCallback((code: string) => {
+    const m = code.toUpperCase().match(/^([FS])(\d{2})$/);
+    if (!m) return null;
+    const season = m[1] === "F" ? "Fall" : "Spring";
+    const year = 2000 + parseInt(m[2]);
+    return { season, year, term: `${season} ${year}` };
+  }, []);
+
+  const filteredTerms = useMemo(() => {
+    const start = parseEnrollCode(enrollStart);
+    const end = parseEnrollCode(enrollEnd);
+    if (!start || !end) return availableTerms;
+    const startIdx = availableTerms.findIndex((t) => t.term === start.term);
+    const endIdx = availableTerms.findIndex((t) => t.term === end.term);
+    if (startIdx === -1 || endIdx === -1) return availableTerms;
+    return availableTerms.slice(Math.min(startIdx, endIdx), Math.max(startIdx, endIdx) + 1);
+  }, [availableTerms, enrollStart, enrollEnd, parseEnrollCode]);
+
+  // Fetch available terms on mount
+  useEffect(() => {
+    fetch("/api/terms")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.terms) setAvailableTerms(d.terms);
+      })
+      .catch(() => {});
+  }, []);
+
+  // selectedPrograms must be declared before chatTransport
+  const [selectedPrograms, setSelectedPrograms] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      try { return JSON.parse(localStorage.getItem("jhu_selectedPrograms") || "[]"); } catch { return []; }
+    }
+    return [];
+  });
+
+  const chatTransport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: "/api/chat",
+        body: { activeTerm, selectedPrograms },
+      }),
+    [activeTerm, selectedPrograms]
+  );
+
   const { messages, sendMessage, setMessages, status, error } = useChat<CourseAgentUIMessage>({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
+    transport: chatTransport,
   });
 
   // Debug: log status transitions and errors
@@ -276,6 +349,184 @@ export default function Home() {
   const [schedule, setSchedule] = useState<ScheduledCourse[]>([]);
   const [selected, setSelected] = useState<ScheduledCourse | null>(null);
   const [previewCourse, setPreviewCourse] = useState<ScheduledCourse | null>(null);
+
+  // --- Direct search bar state ---
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<{ offering_name: string; section_name: string; title: string; credits: string; meetings: string; instructors_full_name: string; department?: string; source?: string; pos_tags?: string | null }[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounced search via API
+  const doSearch = useCallback(async (q: string) => {
+    if (q.length < 2) { setSearchResults([]); return; }
+    setSearchLoading(true);
+    try {
+      const mode = isPastTerm ? "past" : !hasSisData ? "catalogue" : "term";
+      const res = await fetch(`/api/course-search?q=${encodeURIComponent(q)}&term=${encodeURIComponent(activeTerm)}&mode=${mode}`);
+      if (res.ok) setSearchResults(await res.json());
+      else setSearchResults([]);
+    } catch { setSearchResults([]); }
+    setSearchLoading(false);
+  }, [activeTerm]);
+
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (searchQuery.length < 2) { setSearchResults([]); return; }
+    searchTimerRef.current = setTimeout(() => doSearch(searchQuery), 250);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [searchQuery, doSearch]);
+
+  // Close search dropdown on outside click
+  useEffect(() => {
+    if (!searchOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [searchOpen]);
+
+  // Requirements panel state
+  const [reqPanelOpen, setReqPanelOpen] = useState(false);
+  const [programs, setPrograms] = useState<{ program_name: string; school: string; department: string; req_count: number; course_count: number }[]>([]);
+  const [programSearch, setProgramSearch] = useState("");
+  // selectedPrograms declared above before chatTransport
+  interface SchemaSection {
+    name: string; description?: string;
+    type: "all" | "choose_one" | "choose_n" | "credit_min" | "reference_only" | "info_only";
+    n?: number; credits_required?: number; exclusive?: boolean;
+    courses?: { code: string; title?: string; alternatives?: string[]; alt_titles?: string[] }[];
+    pos_tags?: string[]; area_tags?: string[]; course_prefixes?: string[]; min_course_level?: number; match_all?: boolean; min_subsections_complete?: number; required_areas?: number; area_labels?: string[]; areas_covered?: string[]; placeholders?: string[];
+    subsections?: SchemaSection[]; is_chooseable_group?: boolean;
+    status?: "complete" | "in_progress" | "incomplete";
+    fulfilled?: number; total?: number;
+    matched_courses?: { code: string; title: string; term: string; credits: number; matched_by: string }[];
+  }
+  const programDetailsRef = useRef<Record<string, unknown>>({});
+  const progFetchIds = useRef<Record<string, number>>({});
+  const [programDetails, setProgramDetails] = useState<Record<string, { sections?: SchemaSection[]; url: string | null; overallStatus?: string; scheduledCount?: number; totalScheduledCredits?: number; hasSchema?: boolean; crossProgram?: { sharedCourses: string[]; excludedCourses: string[]; maxShared: number } }>>({});
+
+  // Persist selectedPrograms
+  useEffect(() => { localStorage.setItem("jhu_selectedPrograms", JSON.stringify(selectedPrograms)); }, [selectedPrograms]);
+
+  // User overrides for requirements (hidden sections, manually completed sections, added courses)
+  interface ReqOverrides {
+    hiddenSections: string[];      // section keys to hide
+    manualComplete: string[];      // section keys marked manually complete
+    addedCourses: Record<string, string[]>; // section key → added course codes
+  }
+  const [reqOverrides, setReqOverrides] = useState<Record<string, ReqOverrides>>(() => {
+    if (typeof window !== "undefined") {
+      try { return JSON.parse(localStorage.getItem("jhu_reqOverrides") || "{}"); } catch { return {}; }
+    }
+    return {};
+  });
+  useEffect(() => { localStorage.setItem("jhu_reqOverrides", JSON.stringify(reqOverrides)); }, [reqOverrides]);
+
+  const getOverrides = useCallback((program: string): ReqOverrides => {
+    return reqOverrides[program] || { hiddenSections: [], manualComplete: [], addedCourses: {} };
+  }, [reqOverrides]);
+
+  const toggleSectionHidden = useCallback((program: string, sectionKey: string) => {
+    setReqOverrides((prev) => {
+      const o = prev[program] || { hiddenSections: [], manualComplete: [], addedCourses: {} };
+      const hidden = o.hiddenSections.includes(sectionKey)
+        ? o.hiddenSections.filter((k) => k !== sectionKey)
+        : [...o.hiddenSections, sectionKey];
+      return { ...prev, [program]: { ...o, hiddenSections: hidden } };
+    });
+  }, []);
+
+  const toggleManualComplete = useCallback((program: string, sectionKey: string) => {
+    setReqOverrides((prev) => {
+      const o = prev[program] || { hiddenSections: [], manualComplete: [], addedCourses: {} };
+      const mc = o.manualComplete.includes(sectionKey)
+        ? o.manualComplete.filter((k) => k !== sectionKey)
+        : [...o.manualComplete, sectionKey];
+      return { ...prev, [program]: { ...o, manualComplete: mc } };
+    });
+  }, []);
+
+  // Auto-load program details for persisted selections on mount
+  useEffect(() => {
+    if (selectedPrograms.length > 0 && Object.keys(programDetails).length === 0) {
+      for (const name of selectedPrograms) loadProgramDetail(name);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Which selected program is actively showing details
+  const [activeProgram, setActiveProgram] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const progs = JSON.parse(localStorage.getItem("jhu_selectedPrograms") || "[]");
+        return progs.length > 0 ? progs[0] : null;
+      } catch { return null; }
+    }
+    return null;
+  });
+  // Track collapsed state for requirement groups: key = "programName::groupName"
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = useCallback((key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Fetch program list — only programs with LLM-processed schemas
+  const loadPrograms = useCallback(async () => {
+    const res = await fetch("/api/programs/schema");
+    if (res.ok) setPrograms(await res.json());
+  }, []);
+
+  // Fetch program details with progress
+  const loadProgramDetail = useCallback(async (name: string, force = false) => {
+    if (!force && programDetailsRef.current[name]) return;
+    // Per-program fetch ID to prevent stale data without blocking other programs
+    const id = (progFetchIds.current[name] || 0) + 1;
+    progFetchIds.current[name] = id;
+    try {
+      const others = selectedPrograms.filter((p) => p !== name);
+      const othersParam = others.length > 0 ? `&others=${others.map(encodeURIComponent).join("|")}` : "";
+      const res = await fetch(`/api/programs/progress?name=${encodeURIComponent(name)}${othersParam}`);
+      if (res.ok && progFetchIds.current[name] === id) {
+        const data = await res.json();
+        setProgramDetails((prev) => {
+          const next = { ...prev, [name]: data };
+          programDetailsRef.current = next;
+          return next;
+        });
+      }
+    } catch {
+      // Silently fail — user can retry
+    }
+  }, [selectedPrograms]);
+
+  // Reload progress when schedule changes
+  useEffect(() => {
+    for (const name of selectedPrograms) {
+      loadProgramDetail(name, true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schedule]);
+
+  // Term dropdown state
+  const [termOpen, setTermOpen] = useState(false);
+  const termRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!termOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (termRef.current && !termRef.current.contains(e.target as Node)) setTermOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [termOpen]);
 
   // Build valid course codes + ordered section list from tool outputs
   const { validCourses, courseSections } = useMemo(() => {
@@ -312,7 +563,7 @@ export default function Home() {
       return;
     }
     try {
-      const res = await fetch(`/api/course-detail?code=${encodeURIComponent(code)}&section=${encodeURIComponent(section)}&full=1`);
+      const res = await fetch(`/api/course-detail?code=${encodeURIComponent(code)}&section=${encodeURIComponent(section)}&full=1&term=${encodeURIComponent(activeTerm)}`);
       if (!res.ok) { setPreviewCourse(null); return; }
       const data = await res.json();
       if (data?.offering_name) {
@@ -348,15 +599,22 @@ export default function Home() {
     feedback_usefulness: number | null;
     num_evaluations: number | null;
     num_respondents: number | null;
+    pos_tags?: string[];
+    areas?: string | null;
   }
   const [courseDetail, setCourseDetail] = useState<CourseDetail | "loading" | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
+  const scheduleFetchId = useRef(0);
   const fetchSchedule = useCallback(async () => {
-    const res = await fetch("/api/schedule");
-    if (res.ok) setSchedule(await res.json());
-  }, []);
+    const id = ++scheduleFetchId.current;
+    const res = await fetch(`/api/schedule?term=${encodeURIComponent(activeTerm)}`);
+    if (res.ok && scheduleFetchId.current === id) {
+      // Only apply if this is still the latest fetch (prevents race conditions on term switch)
+      setSchedule(await res.json());
+    }
+  }, [activeTerm]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -366,7 +624,9 @@ export default function Home() {
     if (status === "ready") fetchSchedule();
   }, [status, fetchSchedule]);
 
+  // Clear schedule immediately on term switch, then fetch new data
   useEffect(() => {
+    setSchedule([]);
     fetchSchedule();
   }, [fetchSchedule]);
 
@@ -413,7 +673,7 @@ export default function Home() {
     })();
 
     const detailPromise: Promise<CourseDetail | null> = fetch(
-      `/api/course-detail?code=${encodeURIComponent(selected.offering_name)}`
+      `/api/course-detail?code=${encodeURIComponent(selected.offering_name)}&term=${encodeURIComponent(activeTerm)}`
     )
       .then((r) => r.json())
       .then((data: CourseDetail | null) => data || null)
@@ -443,6 +703,14 @@ export default function Home() {
     },
     []
   );
+
+  // Department-based color for search results
+  const deptColor = useCallback((dept: string | undefined) => {
+    if (!dept) return PALETTE[0];
+    let hash = 0;
+    for (let i = 0; i < dept.length; i++) hash = ((hash << 5) - hash + dept.charCodeAt(i)) | 0;
+    return PALETTE[Math.abs(hash) % PALETTE.length];
+  }, []);
 
   const totalCredits = schedule.reduce((sum, c) => {
     const n = parseFloat(c.credits);
@@ -480,37 +748,591 @@ export default function Home() {
       {/* ---- LEFT: Schedule ---- */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-base font-semibold text-slate-900 tracking-tight">
-              JHU Course Planner
-            </h1>
-            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-              Fall 2026
-            </span>
-          </div>
-          {schedule.length > 0 && (
-            <div className="flex items-center gap-4 text-xs text-slate-500">
-              <span>
-                <span className="font-semibold text-slate-700">
-                  {schedule.length}
-                </span>{" "}
-                course{schedule.length !== 1 && "s"}
-              </span>
-              <span className="w-px h-3 bg-slate-200" />
-              <span>
-                <span className="font-semibold text-slate-700">
-                  {totalCredits}
-                </span>{" "}
-                credits
-              </span>
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0 relative z-[100]">
+          {/* Title + Enrollment + Term */}
+          <div className="flex items-center gap-2 shrink-0">
+            <h1 className="text-sm font-semibold text-slate-900 tracking-tight">JHU Planner</h1>
+            {/* Enrollment period */}
+            <div className="flex items-center gap-0.5 text-[10px] text-slate-400">
+              <input
+                type="text"
+                value={enrollStart}
+                onChange={(e) => setEnrollStart(e.target.value.toUpperCase().slice(0, 3))}
+                placeholder="F24"
+                className="w-[32px] text-center text-[10px] font-mono font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded px-0.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-200 focus:border-blue-300"
+              />
+              <span className="text-slate-300">–</span>
+              <input
+                type="text"
+                value={enrollEnd}
+                onChange={(e) => setEnrollEnd(e.target.value.toUpperCase().slice(0, 3))}
+                placeholder="S27"
+                className="w-[32px] text-center text-[10px] font-mono font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded px-0.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-200 focus:border-blue-300"
+              />
             </div>
-          )}
+            {/* Custom term dropdown */}
+            <div className="relative" ref={termRef}>
+              <button
+                onClick={() => setTermOpen(!termOpen)}
+                className="flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 hover:bg-slate-100 hover:border-slate-300 transition-colors"
+              >
+                <span>{activeTerm}</span>
+                <svg className={`w-3 h-3 text-slate-400 transition-transform ${termOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {termOpen && (
+                <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-lg shadow-lg py-1 min-w-[160px]">
+                  {filteredTerms.map((t) => {
+                    const isCurrent = t.term === activeTerm;
+                    return (
+                      <button
+                        key={t.term}
+                        onClick={() => {
+                          setActiveTermState(t.term);
+                          setTermOpen(false);
+                          setSelected(null);
+                          setProfRatings(null);
+                          setCourseDetail(null);
+                          previewCache.current.clear();
+                        }}
+                        className={`w-full text-left px-3 py-1.5 text-[11px] flex items-center justify-between gap-3 transition-colors ${isCurrent ? "bg-blue-50 text-blue-700 font-semibold" : "text-slate-600 hover:bg-slate-50"}`}
+                      >
+                        <span>{t.term}</span>
+                        <span className="flex items-center gap-1.5">
+                          {t.is_current && <span className="text-[8px] text-emerald-500 font-bold">NOW</span>}
+                          <span className="text-[9px] text-slate-300 tabular-nums">{t.course_count > 0 ? t.course_count.toLocaleString() : "—"}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Search bar — hidden in requirements mode */}
+          {!reqPanelOpen && <div className="relative flex-1 max-w-xs" ref={searchRef}>
+              <div className="relative">
+                <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true); }}
+                  onFocus={() => { if (searchQuery.length >= 2) setSearchOpen(true); }}
+                  placeholder="Add course by code or name..."
+                  className="w-full text-xs pl-7 pr-2 py-1.5 rounded-md border border-slate-200 bg-slate-50/50 placeholder:text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-200 focus:border-blue-300 focus:bg-white transition-colors"
+                />
+                {searchLoading && <div className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 border-2 border-slate-200 border-t-blue-400 rounded-full animate-spin" />}
+              </div>
+              {searchOpen && searchResults.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-slate-200 rounded-lg shadow-lg py-1 max-h-[320px] overflow-auto">
+                  {searchResults.map((r, i) => {
+                    const isCatalogue = !!(r as { source?: string }).source;
+                    const isInSchedule = isCatalogue
+                      ? schedule.some((s) => s.offering_name === r.offering_name)
+                      : schedule.some((s) => s.offering_name === r.offering_name && s.section_name === r.section_name);
+                    const dc = deptColor(r.department);
+                    return (
+                      <button
+                        key={`${r.offering_name}-${r.section_name}-${i}`}
+                        onClick={async () => {
+                          if (isInSchedule) return;
+                          const sectionName = isCatalogue ? "PLAN" : isPastTerm ? "TAKEN" : r.section_name;
+                          await fetch("/api/schedule", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ offering_name: r.offering_name, section_name: sectionName, term: activeTerm }),
+                          });
+                          fetchSchedule();
+                          clearPreview();
+                          setSearchQuery("");
+                          setSearchOpen(false);
+                        }}
+                        onMouseEnter={() => {
+                          if (!isCatalogue && r.section_name && hasSisData) {
+                            handlePreview(r.offering_name, r.section_name);
+                          }
+                        }}
+                        onMouseLeave={clearPreview}
+                        className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${isInSchedule ? "opacity-40 cursor-default" : "hover:bg-slate-50 cursor-pointer"}`}
+                      >
+                        <div className="w-1 self-stretch rounded-full shrink-0" style={{ backgroundColor: dc.border }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono font-semibold" style={{ color: dc.text }}>{r.offering_name}</span>
+                            {r.section_name && <span className="text-[9px] text-slate-300">§{r.section_name}</span>}
+                            {r.credits && <span className="text-[9px] text-slate-300">{r.credits}cr</span>}
+                          </div>
+                          <div className="text-[11px] text-slate-700 truncate">{r.title}</div>
+                          <div className="text-[9px] text-slate-400 truncate">
+                            {isCatalogue ? (r.department || "Catalogue") : `${r.meetings || "TBA"} · ${r.instructors_full_name || "Staff"}`}
+                          </div>
+                          {r.pos_tags && (
+                            <div className="flex gap-1 mt-0.5 flex-wrap">
+                              {r.pos_tags.split(",").slice(0, 4).map((tag) => (
+                                <span key={tag} className="text-[7px] font-mono font-semibold text-blue-500 bg-blue-50 rounded px-1">{tag}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {isInSchedule && (
+                          <span className="text-[8px] text-emerald-500 font-semibold shrink-0 mt-1">ADDED</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {searchOpen && searchQuery.length >= 2 && searchResults.length === 0 && !searchLoading && (
+                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-slate-200 rounded-lg shadow-lg py-3 px-3 text-center text-[11px] text-slate-400">
+                  No courses found for &ldquo;{searchQuery}&rdquo;
+                </div>
+              )}
+            </div>}
+
+          {/* Credits + Requirements button */}
+          <div className="flex items-center gap-2 text-[11px] text-slate-400 shrink-0 ml-auto">
+            {schedule.length > 0 && (
+              <Fragment>
+                <span><span className="font-semibold text-slate-600">{schedule.length}</span> course{schedule.length !== 1 && "s"}</span>
+                <span className="w-px h-3 bg-slate-200" />
+                <span><span className="font-semibold text-slate-600">{totalCredits}</span> cr</span>
+                <span className="w-px h-3 bg-slate-200" />
+              </Fragment>
+            )}
+            <button
+              onClick={() => { setReqPanelOpen(!reqPanelOpen); if (!reqPanelOpen && programs.length === 0) loadPrograms(); }}
+              className={`text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${reqPanelOpen ? "bg-violet-50 text-violet-600 border-violet-200" : "text-slate-500 border-slate-200 hover:bg-slate-50 hover:border-slate-300"}`}
+            >
+              Requirements
+            </button>
+          </div>
         </div>
 
+        {/* Requirements panel */}
+        {reqPanelOpen && (
+          <div className="flex-1 flex min-h-0">
+            {/* Left: Program search */}
+            <div className="w-[280px] shrink-0 border-r border-slate-200 flex flex-col bg-slate-50/30">
+              <div className="px-3 py-2.5 border-b border-slate-200">
+                <div className="relative">
+                  <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                  <input
+                    type="text"
+                    value={programSearch}
+                    onChange={(e) => setProgramSearch(e.target.value)}
+                    placeholder="Search majors & minors..."
+                    className="w-full text-[11px] pl-7 pr-2 py-1.5 rounded-md border border-slate-200 bg-white placeholder:text-slate-300 focus:outline-none focus:ring-1 focus:ring-violet-200 focus:border-violet-300"
+                  />
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto">
+                {(programSearch.length > 0
+                  ? programs.filter((p) => p.program_name.toLowerCase().includes(programSearch.toLowerCase()))
+                  : programs
+                ).map((p) => {
+                  const isSelected = selectedPrograms.includes(p.program_name);
+                  return (
+                    <button
+                      key={p.program_name}
+                      onClick={() => {
+                        if (isSelected) {
+                          setSelectedPrograms((s) => s.filter((n) => n !== p.program_name));
+                        } else {
+                          setSelectedPrograms((s) => [...s, p.program_name]);
+                          setActiveProgram(p.program_name);
+                          loadProgramDetail(p.program_name);
+                        }
+                      }}
+                      className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-[11px] border-b border-slate-100 transition-colors ${isSelected ? "bg-violet-50 text-violet-700 font-medium" : "text-slate-600 hover:bg-white"}`}
+                    >
+                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${isSelected ? "bg-violet-500 border-violet-500 text-white" : "border-slate-300"}`}>
+                        {isSelected && <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                      </div>
+                      <span className="flex-1 truncate">{p.program_name}</span>
+                      <span className="text-[9px] text-slate-300 shrink-0">{p.course_count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Right: Selected programs chips + active detail */}
+            <div className="flex-1 flex flex-col bg-white min-w-0">
+              {/* Program chips bar */}
+              {selectedPrograms.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 px-4 py-2.5 border-b border-slate-200 bg-slate-50/30">
+                  {selectedPrograms.map((pname) => {
+                    const isActive = activeProgram === pname;
+                    const detail = programDetails[pname];
+                    const os = detail?.overallStatus;
+                    const statusDot = os === "complete" ? "bg-emerald-400" : os === "in_progress" ? "bg-amber-400" : "bg-slate-300";
+                    return (
+                      <button
+                        key={pname}
+                        onClick={() => setActiveProgram(isActive ? null : pname)}
+                        className={`inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${isActive ? "bg-violet-100 text-violet-700 border-violet-300" : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"}`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${statusDot} shrink-0`} />
+                        <span className="truncate max-w-[180px]">{pname}</span>
+                        <span
+                          onClick={(e) => { e.stopPropagation(); setSelectedPrograms((p) => p.filter((n) => n !== pname)); setProgramDetails((d) => { const next = { ...d }; delete next[pname]; return next; }); if (activeProgram === pname) setActiveProgram(null); }}
+                          className="text-slate-400 hover:text-red-500 ml-0.5"
+                        >
+                          ×
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Detail view for active program */}
+              <div className="flex-1 overflow-auto">
+                {selectedPrograms.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center space-y-2 max-w-xs px-4">
+                      <div className="mx-auto w-10 h-10 rounded-lg bg-violet-50 border border-violet-100 flex items-center justify-center text-violet-300 text-lg">+</div>
+                      <p className="text-xs font-medium text-slate-500">Select a program</p>
+                      <p className="text-[11px] text-slate-400">Choose your major, minor, or certificate from the list.</p>
+                    </div>
+                  </div>
+                ) : !activeProgram ? (
+                  <div className="flex items-center justify-center h-full">
+                    <p className="text-[11px] text-slate-400">Click a program above to view its requirements.</p>
+                  </div>
+                ) : (() => {
+                  const detail = programDetails[activeProgram];
+                  if (!detail) return <div className="px-4 py-6 text-[11px] text-slate-400 text-center">Loading requirements...</div>;
+
+                  // Short term label: "Fall 2024" → "F24", "Spring 2025" → "S25", "AP/Transfer" → "AP"
+                  const shortTerm = (term: string) => {
+                    if (!term) return "";
+                    if (term === "AP/Transfer") return "AP";
+                    const m = term.match(/^(Fall|Spring|Summer)\s+(\d{4})$/);
+                    if (!m) return term;
+                    return (m[1] === "Fall" ? "F" : m[1] === "Spring" ? "S" : "Su") + m[2].slice(2);
+                  };
+
+                  const typeLabel = (s: SchemaSection) => {
+                    if (s.is_chooseable_group) return "Choose 1 track";
+                    if (s.type === "all") return "All required";
+                    if (s.type === "choose_one") return "Pick 1";
+                    if (s.type === "choose_n") return `Pick ${s.n}`;
+                    if (s.type === "credit_min" && s.credits_required) return `${s.credits_required}cr min`;
+                    if (s.type === "credit_min") return "Credits";
+                    return "";
+                  };
+
+                  const overrides = activeProgram ? getOverrides(activeProgram) : { hiddenSections: [], manualComplete: [], addedCourses: {} };
+
+                  const renderSection = (s: SchemaSection, depth: number, parentKey: string) => {
+                    const key = `${parentKey}::${s.name}`;
+                    const isHidden = overrides.hiddenSections.includes(key);
+                    const isManualComplete = overrides.manualComplete.includes(key);
+                    const isCollapsed = !collapsedGroups.has(key);
+
+                    const st = isManualComplete ? "complete" : s.status;
+                    const dot = st === "complete" ? "bg-emerald-400" : st === "in_progress" ? "bg-amber-400" : "bg-slate-300";
+                    const matched = s.matched_courses || [];
+                    const matchedCodes = new Set(matched.map((m) => m.code));
+
+                    let prog = "";
+                    if (s.type === "credit_min" && s.credits_required) {
+                      // Use fulfilled from API — it already includes child credits
+                      prog = `${s.fulfilled ?? 0}/${s.credits_required}cr`;
+                    } else if (s.fulfilled !== undefined && s.total !== undefined && s.total > 0) {
+                      prog = `${s.fulfilled}/${s.total}`;
+                    }
+
+                    if (s.type === "reference_only" || s.type === "info_only") return null;
+                    if (isHidden) {
+                      return (
+                        <div key={key} className={`${depth > 0 ? "ml-4" : ""} opacity-40`}>
+                          <div className={`flex items-center gap-1.5 ${depth === 0 ? "px-4 py-1" : "px-3 py-0.5"}`}>
+                            <span className="text-[10px] text-slate-400 line-through flex-1">{s.name}</span>
+                            <button onClick={() => toggleSectionHidden(activeProgram!, key)} className="text-[9px] text-blue-400 hover:text-blue-600">Show</button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={key} className={depth > 0 ? "ml-4 border-l border-slate-100" : ""}>
+                        <div className={`flex items-center gap-1.5 transition-colors group/hdr ${depth === 0 ? "px-4 py-2 hover:bg-slate-50" : "px-3 py-1.5 hover:bg-slate-50/50"}`}>
+                          <button onClick={() => toggleGroup(key)} className="flex items-center gap-1.5 flex-1 min-w-0 text-left">
+                            <svg className={`w-3 h-3 text-slate-400 shrink-0 transition-transform ${isCollapsed ? "" : "rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                            <span className={`w-1.5 h-1.5 rounded-full ${dot} shrink-0`} />
+                            <span className={`flex-1 truncate ${depth === 0 ? "text-[11px] font-semibold text-slate-700" : "text-[10px] font-medium text-slate-500"} ${isManualComplete ? "line-through opacity-60" : ""}`}>{s.name}</span>
+                          </button>
+                          <span className="text-[8px] text-slate-300 shrink-0">{typeLabel(s)}</span>
+                          {prog && <span className={`text-[9px] font-medium shrink-0 ml-1 ${st === "complete" ? "text-emerald-500" : st === "in_progress" ? "text-amber-500" : "text-slate-300"}`}>{prog}</span>}
+                          {s.required_areas && s.area_labels && (
+                            <span className={`text-[9px] font-medium shrink-0 ml-1 ${(s.areas_covered?.length || 0) >= s.required_areas ? "text-emerald-500" : "text-amber-500"}`}>
+                              {s.areas_covered?.length || 0}/{s.required_areas} areas
+                            </span>
+                          )}
+                          {isManualComplete && <span className="text-[8px] text-emerald-500 shrink-0">manual</span>}
+                          {/* Edit controls — visible on hover */}
+                          <div className="flex items-center gap-1 opacity-0 group-hover/hdr:opacity-100 transition-opacity shrink-0">
+                            <button
+                              onClick={() => toggleManualComplete(activeProgram!, key)}
+                              title={isManualComplete ? "Unmark complete" : "Mark as complete"}
+                              className={`text-[9px] px-1 py-0.5 rounded ${isManualComplete ? "text-amber-500 hover:text-amber-600" : "text-emerald-400 hover:text-emerald-600"}`}
+                            >
+                              {isManualComplete ? "↩" : "✓"}
+                            </button>
+                            <button
+                              onClick={() => toggleSectionHidden(activeProgram!, key)}
+                              title="Hide this section"
+                              className="text-[9px] text-slate-300 hover:text-red-400 px-1 py-0.5 rounded"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                        {!isCollapsed && (
+                          <div className={depth === 0 ? "px-4 pb-2" : "px-3 pb-1"}>
+                            {s.description && <div className="text-[9px] text-slate-400 mb-1.5">{s.description}</div>}
+
+                            {/* Area coverage badges */}
+                            {s.area_labels && s.area_labels.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mb-2">
+                                {s.area_labels.map((area) => {
+                                  const covered = s.areas_covered?.includes(area);
+                                  return (
+                                    <span key={area} className={`text-[8px] font-mono px-1.5 py-0.5 rounded border ${covered ? "bg-emerald-50 text-emerald-600 border-emerald-200" : "bg-slate-50 text-slate-400 border-slate-200"}`}>
+                                      {covered ? "✓ " : ""}{area}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* Courses */}
+                            {s.courses && s.courses.length > 0 && (
+                              <div className="space-y-0.5 mb-1">
+                                {s.courses.map((ref, ri) => {
+                                  const allCodes = [ref.code, ...(ref.alternatives || [])];
+                                  const done = allCodes.some((c) => matchedCodes.has(c));
+                                  const matchedCode = allCodes.find((c) => matchedCodes.has(c));
+                                  const matchInfo = matchedCode ? matched.find((m) => m.code === matchedCode) : null;
+                                  return (
+                                    <div key={ri}>
+                                      <div className="flex items-center gap-1.5 text-[11px] py-0.5">
+                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${done ? "bg-emerald-400" : "bg-slate-300"}`} />
+                                        <span className={`font-mono text-[10px] shrink-0 ${done ? "text-emerald-600" : "text-violet-600"}`}>{ref.code}</span>
+                                        <span className={`truncate ${done ? "text-emerald-600" : "text-slate-500"}`}>{ref.title || ""}</span>
+                                        {done && matchInfo && <span className="text-[8px] text-emerald-400 bg-emerald-50 rounded px-1 shrink-0">{shortTerm(matchInfo.term)}</span>}
+                                      </div>
+                                      {ref.alternatives && ref.alternatives.length > 0 && (
+                                        <div className="ml-5 space-y-0.5">
+                                          {ref.alternatives.map((alt, ai) => {
+                                            const altDone = matchedCodes.has(alt);
+                                            const altTitle = ref.alt_titles?.[ai] || "";
+                                            return (
+                                              <div key={ai} className="flex items-center gap-1.5 text-[10px] py-0.5">
+                                                <span className={`text-[9px] ${altDone ? "text-emerald-400" : "text-orange-400"}`}>{altDone ? "✓" : "or"}</span>
+                                                <span className={`font-mono text-[10px] shrink-0 ${altDone ? "text-emerald-600" : "text-slate-400"}`}>{alt}</span>
+                                                <span className={`truncate ${altDone ? "text-emerald-500" : "text-slate-400"}`}>{altTitle}</span>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* POS tags */}
+                            {s.pos_tags && s.pos_tags.length > 0 && (
+                              <div className="space-y-0.5 mb-1">
+                                {s.pos_tags.map((tag) => {
+                                  const tagMatches = matched.filter((m) => m.matched_by.includes(tag));
+                                  return (
+                                    <div key={tag}>
+                                      <div className="flex items-center gap-1.5 text-[10px] py-0.5">
+                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${tagMatches.length > 0 ? "bg-emerald-400" : "bg-slate-300"}`} />
+                                        <span className={`font-mono text-[9px] ${tagMatches.length > 0 ? "text-emerald-500" : "text-blue-500"}`}>{tag}</span>
+                                      </div>
+                                      {tagMatches.length > 0 && (
+                                        <div className="ml-5 space-y-0.5">
+                                          {tagMatches.map((m, mi) => (
+                                            <div key={mi} className="flex items-center gap-1 text-[10px] text-emerald-600">
+                                              <span className="text-emerald-400">↳</span>
+                                              <span className="font-mono">{m.code}</span>
+                                              <span className="truncate text-emerald-500">{m.title}</span>
+                                              <span className="text-[8px] text-emerald-400 bg-emerald-50 rounded px-1 shrink-0">{shortTerm(m.term)}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* Area tags */}
+                            {s.area_tags && s.area_tags.length > 0 && !s.courses?.length && (
+                              <div className="mb-1">
+                                <div className="flex gap-1 mb-1">
+                                  {s.area_tags.map((a) => <span key={a} className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 border border-emerald-100">{a}</span>)}
+                                </div>
+                                {matched.length > 0 && (
+                                  <div className="ml-2 space-y-0.5">
+                                    {matched.map((m, mi) => (
+                                      <div key={mi} className="flex items-center gap-1 text-[10px] text-emerald-600">
+                                        <span className="text-emerald-400">↳</span>
+                                        <span className="font-mono">{m.code}</span>
+                                        <span className="truncate text-emerald-500">{m.title}</span>
+                                        <span className="text-[8px] text-emerald-400 shrink-0">{m.credits}cr</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Matched courses for sections that don't have their own display (no courses, no POS tags, no area tags) */}
+                            {matched.length > 0 && !s.courses?.length && !s.pos_tags?.length && !s.area_tags?.length && (
+                              <div className="space-y-0.5 mb-1">
+                                {matched.map((m, mi) => (
+                                  <div key={mi} className="flex items-center gap-1.5 text-[10px] text-emerald-600 py-0.5 group/mc">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                                    <span className="font-mono">{m.code}</span>
+                                    <span className="truncate text-emerald-500">{m.title}</span>
+                                    <span className="text-[8px] text-emerald-400 shrink-0">{m.credits}cr</span>
+                                    <span className="text-[8px] text-emerald-400 bg-emerald-50 rounded px-1 shrink-0">{shortTerm(m.term)}</span>
+                                    <button
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        await fetch("/api/schedule", {
+                                          method: "DELETE",
+                                          headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ offering_name: m.code, term: m.term || activeTerm }),
+                                        });
+                                        fetchSchedule();
+                                      }}
+                                      className="text-[9px] text-red-300 hover:text-red-500 opacity-0 group-hover/mc:opacity-100 shrink-0"
+                                      title={`Remove ${m.code} from ${m.term}`}
+                                    >✕</button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Placeholders */}
+                            {s.placeholders && s.placeholders.map((p, pi) => (
+                              <div key={pi} className="text-[10px] text-slate-500 italic py-0.5">{p}</div>
+                            ))}
+
+                            {/* Subsections */}
+                            {s.subsections && s.subsections.map((sub, si) => (
+                              <Fragment key={si}>{renderSection(sub, depth + 1, key)}</Fragment>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  };
+
+                  return (
+                    <Fragment>
+                      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100">
+                        <span className="text-[11px] font-semibold text-slate-700 flex-1">{activeProgram}</span>
+                        {detail.totalScheduledCredits !== undefined && <span className="text-[9px] text-slate-400">{detail.totalScheduledCredits}cr scheduled</span>}
+                        {detail.crossProgram && detail.crossProgram.excludedCourses.length > 0 && (
+                          <span className="text-[9px] text-amber-500" title={`Shared: ${detail.crossProgram.sharedCourses.join(", ")}. Excluded: ${detail.crossProgram.excludedCourses.join(", ")}`}>
+                            {detail.crossProgram.sharedCourses.length}/{detail.crossProgram.maxShared} shared
+                          </span>
+                        )}
+                        {detail.url && <a href={detail.url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-400 hover:text-blue-600">e-catalogue ↗</a>}
+                      </div>
+                      <div className="py-1">{(detail.sections || []).map((s, i) => <Fragment key={i}>{renderSection(s, 0, activeProgram)}</Fragment>)}</div>
+                    </Fragment>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Grid area */}
-        <div className="flex-1 overflow-auto relative">
-          {schedule.length === 0 ? (
+        {!reqPanelOpen && <div className="flex-1 overflow-auto relative">
+          {!showCalendar ? (
+            <div className="h-full flex flex-col">
+              {/* List header */}
+              <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/50">
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold ${isPastTerm ? "bg-blue-100 text-blue-500" : "bg-violet-100 text-violet-500"}`}>
+                    {isPastTerm ? "✓" : "P"}
+                  </div>
+                  <span className="text-xs font-semibold text-slate-600">
+                    {activeTerm} — {isPastTerm ? "Courses Taken" : hasSisData ? "Course List" : "Course Plan"}
+                  </span>
+                  <span className="text-[10px] text-slate-400 ml-auto">
+                    {schedule.length > 0 ? `${schedule.length} course${schedule.length !== 1 ? "s" : ""} · ${totalCredits} cr` : isPastTerm ? "No courses recorded" : "No courses planned yet"}
+                  </span>
+                </div>
+              </div>
+
+              {schedule.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center space-y-2 max-w-xs px-4">
+                    <div className={`mx-auto w-10 h-10 rounded-lg border flex items-center justify-center text-lg ${isPastTerm ? "bg-blue-50 border-blue-100 text-blue-300" : "bg-violet-50 border-violet-100 text-violet-300"}`}>+</div>
+                    <p className="text-xs font-medium text-slate-500">
+                      {isPastTerm ? `Add courses taken in ${activeTerm}` : `Plan courses for ${activeTerm}`}
+                    </p>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      {isPastTerm
+                        ? "Search for courses you completed and add them to track your progress."
+                        : hasSisData ? "Use the search bar or chat to find and add courses." : "Use the search bar or chat to find courses and add them to your plan. Sections and times aren\u2019t available yet."}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 overflow-auto px-4 py-3 space-y-1.5">
+                  {schedule.map((c) => {
+                    const dc = deptColor(c.department);
+                    return (
+                      <div
+                        key={`${c.offering_name}-${c.section_name}`}
+                        className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-slate-100 bg-white hover:border-slate-200 transition-colors group"
+                      >
+                        <div className="w-1 self-stretch rounded-full shrink-0" style={{ backgroundColor: dc.border }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono font-semibold" style={{ color: dc.text }}>{c.offering_name}</span>
+                            <span className="text-[10px] text-slate-400">{c.credits} cr</span>
+                          </div>
+                          <div className="text-[11px] text-slate-700 truncate">{c.title}</div>
+                          <div className="text-[9px] text-slate-400 truncate">
+                            {c.meetings && c.meetings !== "" ? `${c.meetings} · ${c.instructors_full_name || "Staff"}` : c.department || ""}
+                          </div>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            await fetch("/api/schedule", {
+                              method: "DELETE",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ offering_name: c.offering_name, term: activeTerm }),
+                            });
+                            fetchSchedule();
+                          }}
+                          className="text-[10px] text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                          title="Remove from plan"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : schedule.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center space-y-2 max-w-xs">
                 <div className="mx-auto w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-300 text-xl">
@@ -637,7 +1459,7 @@ export default function Home() {
                           await fetch("/api/schedule", {
                             method: "DELETE",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ offering_name: block.course.offering_name, section_name: block.course.section_name }),
+                            body: JSON.stringify({ offering_name: block.course.offering_name, term: activeTerm }),
                           });
                           fetchSchedule();
                           if (selected?.offering_name === block.course.offering_name && selected?.section_name === block.course.section_name) {
@@ -664,13 +1486,50 @@ export default function Home() {
             </div>
           )}
 
+          {/* Courses with no meetings (TBA/online/PLAN in current term) — show as list below calendar */}
+          {showCalendar && (() => {
+            const ghostCourses = schedule.filter((c) => {
+              if (!c.meetings || c.meetings === "" || c.meetings === "TBA") return true;
+              if (c.section_name === "PLAN" || c.section_name === "TAKEN") return true;
+              // Check if this course has any visible calendar blocks
+              const mbs = parseMeetings(c.meetings);
+              return mbs.length === 0;
+            });
+            if (ghostCourses.length === 0) return null;
+            return (
+              <div className="border-t border-slate-200 bg-slate-50/50 px-4 py-2">
+                <div className="text-[10px] text-slate-400 mb-1">Courses without scheduled times:</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {ghostCourses.map((c) => (
+                    <div key={`${c.offering_name}-${c.section_name}`} className="flex items-center gap-1.5 text-[10px] bg-white border border-slate-200 rounded px-2 py-1 group/ghost">
+                      <span className="font-mono text-violet-600">{c.offering_name}</span>
+                      <span className="text-slate-500 truncate max-w-[120px]">{c.title}</span>
+                      <span className="text-slate-300">{c.credits}cr</span>
+                      <button
+                        onClick={async () => {
+                          await fetch("/api/schedule", {
+                            method: "DELETE",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ offering_name: c.offering_name, term: activeTerm }),
+                          });
+                          fetchSchedule();
+                        }}
+                        className="text-red-300 hover:text-red-500 opacity-0 group-hover/ghost:opacity-100"
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Course detail panel */}
           {selected && panelReady && (
             <div
               ref={panelRef}
-              className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] z-20 max-h-[55%] flex flex-col"
+              className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] z-20 max-h-[60%] flex flex-col"
             >
-              <div className="overflow-y-auto px-5 py-4">
+              <div className="flex-1 overflow-y-auto px-5 py-3">
                 {/* Header */}
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div className="min-w-0">
@@ -692,7 +1551,7 @@ export default function Home() {
                         await fetch("/api/schedule", {
                           method: "DELETE",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ offering_name: selected.offering_name, section_name: selected.section_name }),
+                          body: JSON.stringify({ offering_name: selected.offering_name, term: activeTerm }),
                         });
                         setSelected(null); setProfRatings(null); setCourseDetail(null);
                         fetchSchedule();
@@ -855,16 +1714,49 @@ export default function Home() {
                     {courseDetail && courseDetail !== "loading" && !courseDetail.description && !courseDetail.prerequisites && (
                       <p className="text-[12px] text-slate-400">No description available</p>
                     )}
+                    {courseDetail && courseDetail !== "loading" && courseDetail.areas && (
+                      <div>
+                        <span className="text-[11px] text-slate-400">Areas</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {courseDetail.areas.split(",").map((area) => area.trim()).filter(Boolean).map((area) => {
+                            const isDistro = /^[EHNQ]$/.test(area) || area === "HE";
+                            return (
+                              <span
+                                key={area}
+                                className={`inline-block text-[9px] font-medium px-1.5 py-0.5 rounded border ${isDistro ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold" : "bg-slate-50 text-slate-600 border-slate-200"}`}
+                              >
+                                {area}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {courseDetail && courseDetail !== "loading" && courseDetail.pos_tags && courseDetail.pos_tags.length > 0 && (
+                      <div>
+                        <span className="text-[11px] text-slate-400">POS Codes</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {courseDetail.pos_tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="inline-block text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-100"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
             </div>
           )}
-        </div>
+        </div>}
       </main>
 
-      {/* ---- RIGHT: Chat ---- */}
-      <aside className="w-[380px] shrink-0 border-l border-slate-200 bg-white flex flex-col">
+      {/* ---- RIGHT: Chat (hidden in requirements mode) ---- */}
+      {!reqPanelOpen && <aside className="w-[380px] shrink-0 border-l border-slate-200 bg-white flex flex-col">
         {/* Chat header — aligned with left top bar */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
           <p className="text-base font-semibold text-slate-900 tracking-tight">
@@ -952,7 +1844,7 @@ export default function Home() {
                             await fetch("/api/schedule", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ offering_name: code, section_name: section }),
+                              body: JSON.stringify({ offering_name: code, section_name: section, term: activeTerm }),
                             });
                             fetchSchedule();
                             clearPreview();
@@ -1037,7 +1929,7 @@ export default function Home() {
             </button>
           </form>
         </div>
-      </aside>
+      </aside>}
     </div>
   );
 }

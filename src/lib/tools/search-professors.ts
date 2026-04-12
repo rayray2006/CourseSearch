@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { supabase } from "../supabase";
+import { getActiveTerm } from "./schedule-tools";
 
 export const searchProfessors = tool({
   description:
@@ -52,7 +53,7 @@ export const searchProfessors = tool({
 
 export const findRatedInstructors = tool({
   description:
-    "Find the best/worst/easiest/hardest professors who are actually teaching Fall 2026 courses. Use for ANY superlative query like 'best rated professor teaching this fall'.",
+    "Find the best/worst/easiest/hardest professors who are actually teaching courses in the current semester. Use for ANY superlative query like 'best rated professor teaching this semester'.",
   inputSchema: z.object({
     department: z.string().optional().describe("Filter courses by department, e.g. 'Computer Science'"),
     sortBy: z
@@ -94,6 +95,7 @@ export const findRatedInstructors = tool({
       let courseQuery = supabase
         .from("courses")
         .select("offering_name, title, meetings, department")
+        .eq("term", getActiveTerm())
         .ilike("instructors_full_name", `%${prof.last_name}%`)
         .neq("status", "Canceled")
         .limit(1);

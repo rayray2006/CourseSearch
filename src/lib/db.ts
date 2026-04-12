@@ -49,6 +49,7 @@ export function initDb() {
       feedback_usefulness REAL,
       num_evaluations INTEGER DEFAULT 0,
       num_respondents INTEGER DEFAULT 0,
+      pos_tags TEXT DEFAULT '',
       UNIQUE(offering_name, section_name, term)
     );
 
@@ -96,6 +97,58 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_prof_last_name ON professors(last_name);
     CREATE INDEX IF NOT EXISTS idx_prof_department ON professors(department);
     CREATE INDEX IF NOT EXISTS idx_prof_rating ON professors(avg_rating);
+
+    CREATE TABLE IF NOT EXISTS schedules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      offering_name TEXT NOT NULL,
+      section_name TEXT NOT NULL,
+      term TEXT NOT NULL DEFAULT 'Fall 2026',
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(session_id, offering_name, section_name, term)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_schedules_session ON schedules(session_id);
+    CREATE INDEX IF NOT EXISTS idx_schedules_term ON schedules(term);
+
+    CREATE TABLE IF NOT EXISTS catalogue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      offering_name TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      credits TEXT,
+      department TEXT,
+      description TEXT DEFAULT '',
+      prerequisites TEXT DEFAULT '',
+      corequisites TEXT DEFAULT '',
+      restrictions TEXT DEFAULT ''
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_catalogue_title ON catalogue(title);
+    CREATE INDEX IF NOT EXISTS idx_catalogue_department ON catalogue(department);
+    CREATE INDEX IF NOT EXISTS idx_catalogue_offering ON catalogue(offering_name);
+
+    CREATE TABLE IF NOT EXISTS program_requirements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      program_name TEXT NOT NULL DEFAULT 'My Program',
+      requirements TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(session_id, program_name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_requirements_session ON program_requirements(session_id);
+
+    CREATE TABLE IF NOT EXISTS available_terms (
+      term TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      has_sis_data INTEGER DEFAULT 0,
+      course_count INTEGER DEFAULT 0,
+      is_current INTEGER DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_courses_term ON courses(term);
+    CREATE INDEX IF NOT EXISTS idx_courses_offering ON courses(offering_name);
   `);
   return db;
 }

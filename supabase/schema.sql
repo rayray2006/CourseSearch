@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS courses (
   prerequisites TEXT DEFAULT '',
   corequisites TEXT DEFAULT '',
   restrictions TEXT DEFAULT '',
+  all_departments TEXT DEFAULT '',
   overall_quality REAL,
   instructor_effectiveness REAL,
   intellectual_challenge REAL,
@@ -48,6 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status);
 CREATE INDEX IF NOT EXISTS idx_courses_level ON courses(level);
 CREATE INDEX IF NOT EXISTS idx_courses_instructors ON courses(instructors_full_name);
 CREATE INDEX IF NOT EXISTS idx_courses_offering ON courses(offering_name);
+CREATE INDEX IF NOT EXISTS idx_courses_term ON courses(term);
 
 -- Professors table (RateMyProfessors data)
 CREATE TABLE IF NOT EXISTS professors (
@@ -87,14 +89,55 @@ CREATE TABLE IF NOT EXISTS evaluations (
 CREATE INDEX IF NOT EXISTS idx_eval_course ON evaluations(course_code);
 CREATE INDEX IF NOT EXISTS idx_eval_instructor ON evaluations(instructor);
 
--- User schedules (replaces in-memory store)
+-- User schedules (per-term isolation)
 CREATE TABLE IF NOT EXISTS schedules (
   id SERIAL PRIMARY KEY,
   session_id TEXT NOT NULL,
   offering_name TEXT NOT NULL,
   section_name TEXT NOT NULL,
+  term TEXT NOT NULL DEFAULT 'Fall 2026',
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(session_id, offering_name, section_name)
+  UNIQUE(session_id, offering_name, section_name, term)
 );
 
 CREATE INDEX IF NOT EXISTS idx_schedules_session ON schedules(session_id);
+CREATE INDEX IF NOT EXISTS idx_schedules_term ON schedules(term);
+
+-- Course catalogue (term-independent, from e-catalogue)
+CREATE TABLE IF NOT EXISTS catalogue (
+  id SERIAL PRIMARY KEY,
+  offering_name TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  credits TEXT,
+  department TEXT,
+  description TEXT DEFAULT '',
+  prerequisites TEXT DEFAULT '',
+  corequisites TEXT DEFAULT '',
+  restrictions TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_catalogue_title ON catalogue(title);
+CREATE INDEX IF NOT EXISTS idx_catalogue_department ON catalogue(department);
+CREATE INDEX IF NOT EXISTS idx_catalogue_offering ON catalogue(offering_name);
+
+-- Program requirements (user-defined degree requirements)
+CREATE TABLE IF NOT EXISTS program_requirements (
+  id SERIAL PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  program_name TEXT NOT NULL DEFAULT 'My Program',
+  requirements JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(session_id, program_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_requirements_session ON program_requirements(session_id);
+
+-- Available terms metadata
+CREATE TABLE IF NOT EXISTS available_terms (
+  term TEXT PRIMARY KEY,
+  sort_order INTEGER NOT NULL,
+  has_sis_data BOOLEAN DEFAULT FALSE,
+  course_count INTEGER DEFAULT 0,
+  is_current BOOLEAN DEFAULT FALSE
+);

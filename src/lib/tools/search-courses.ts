@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { supabase } from "../supabase";
+import { getActiveTerm } from "./schedule-tools";
 
 const COURSE_COLUMNS = "offering_name, section_name, title, credits, department, school_name, level, status, meetings, location, building, instruction_method, instructors_full_name, max_seats, open_seats, waitlisted, is_writing_intensive, areas, time_of_day, description, prerequisites, corequisites, restrictions, overall_quality, instructor_effectiveness, intellectual_challenge, workload, feedback_usefulness, num_evaluations, num_respondents, all_departments";
 
@@ -43,7 +44,7 @@ function timesOverlap(a: { startMin: number; endMin: number }, b: { startMin: nu
 }
 
 export const searchCourses = tool({
-  description: `Search JHU Fall 2026 courses. Use this to find courses matching criteria like title keywords, department, school, level, schedule, credits, instructor, etc. Returns up to 20 results. For broad queries, encourage the user to narrow down.`,
+  description: `Search JHU courses for the currently selected semester. Use this to find courses matching criteria like title keywords, department, school, level, schedule, credits, instructor, etc. Returns up to 20 results. For broad queries, encourage the user to narrow down.`,
   inputSchema: z.object({
     // ── Text search ──
     titleKeyword: z.string().optional().describe(
@@ -113,7 +114,8 @@ export const searchCourses = tool({
     offset: z.number().optional().describe("Skip this many results. Use with limit for pagination (e.g. 'show me more' → offset: 20)."),
   }),
   execute: async (input) => {
-    let query = supabase.from("courses").select(COURSE_COLUMNS);
+    const activeTerm = getActiveTerm();
+    let query = supabase.from("courses").select(COURSE_COLUMNS).eq("term", activeTerm);
 
     // Sort
     if (input.sortBy) {
@@ -326,14 +328,14 @@ export const searchCourses = tool({
 
 export const getCourseStats = tool({
   description:
-    "Get statistics about available Fall 2026 courses — total count, breakdowns by school, level, status, etc.",
+    "Get statistics about courses for the current semester — total count, breakdowns by school, level, status, etc.",
   inputSchema: z.object({
     groupBy: z
       .enum(["school_name", "department", "level", "status", "time_of_day", "instruction_method", "is_writing_intensive"])
       .describe("Field to group statistics by"),
   }),
   execute: async ({ groupBy }) => {
-    // Fetch all values for the groupBy column, paginating past the 1000 row limit
+    const activeTerm = getActiveTerm();
     let allData: Record<string, string>[] = [];
     let offset = 0;
     const pageSize = 1000;
@@ -341,6 +343,7 @@ export const getCourseStats = tool({
       const { data, error } = await supabase
         .from("courses")
         .select(groupBy)
+        .eq("term", activeTerm)
         .range(offset, offset + pageSize - 1);
       if (error || !data || data.length === 0) break;
       allData = allData.concat(data as Record<string, string>[]);
@@ -349,7 +352,7 @@ export const getCourseStats = tool({
     }
 
     const data = allData;
-    if (data.length === 0) return { total: 0, breakdown: [] };
+    if (data.length === 0) return { total: 0, breakdown: [], term: activeTerm };
 
     const counts = new Map<string, number>();
     for (const row of data) {
@@ -361,6 +364,158 @@ export const getCourseStats = tool({
       .map(([category, count]) => ({ category, count }))
       .sort((a, b) => b.count - a.count);
 
-    return { total: data.length, breakdown };
+    return { total: data.length, breakdown, term: activeTerm };
+  },
+});
+
+export const searchCatalogue = tool({
+  description:
+    "Search the full JHU course catalogue (all courses regardless of semester). Use this for future semesters where schedule data isn't populated yet, or to find courses that may not be offered in the current term. Returns course info without sections, seats, or schedule data.",
+  inputSchema: z.object({
+    titleKeyword: z.string().optional().describe("Keywords to search in course title (case-insensitive, substring match)."),
+    descriptionKeyword: z.string().optional().describe("Keywords to search in course description."),
+    courseNumber: z.string().optional().describe("Course number or partial, e.g. 'EN.601' or '601.226'."),
+    department: z.string().optional().describe("Department name or partial match."),
+    hasPrerequisites: z.boolean().optional().describe("If true, only courses with prerequisites."),
+    prerequisiteKeyword: z.string().optional().describe("Find courses that require a specific prerequisite."),
+    limit: z.number().optional().describe("Max results (default 20, max 50)."),
+    offset: z.number().optional().describe("Skip this many results for pagination."),
+  }),
+  execute: async (input) => {
+    let query = supabase
+      .from("catalogue")
+      .select("offering_name, title, credits, department, description, prerequisites, corequisites, restrictions")
+      .order("offering_name");
+
+    const limit = Math.min(input.limit || 20, 50);
+    const offset = input.offset || 0;
+    query = query.range(offset, offset + limit - 1);
+
+    if (input.titleKeyword) {
+      for (const word of input.titleKeyword.split(/\s+/).filter(Boolean)) {
+        query = query.ilike("title", `%${word}%`);
+      }
+    }
+    if (input.descriptionKeyword) {
+      for (const word of input.descriptionKeyword.split(/\s+/).filter(Boolean)) {
+        query = query.ilike("description", `%${word}%`);
+      }
+    }
+    if (input.courseNumber) query = query.ilike("offering_name", `%${input.courseNumber}%`);
+    if (input.department) query = query.ilike("department", `%${input.department}%`);
+    if (input.hasPrerequisites === true) query = query.neq("prerequisites", "");
+    else if (input.hasPrerequisites === false) query = query.or("prerequisites.eq.,prerequisites.is.null");
+    if (input.prerequisiteKeyword) query = query.ilike("prerequisites", `%${input.prerequisiteKeyword}%`);
+
+    const { data, error } = await query;
+    if (error) return { count: 0, courses: [], error: error.message };
+
+    return {
+      count: (data || []).length,
+      courses: (data || []).map((r) => ({
+        ...r,
+        description: r.description ? r.description.slice(0, 200) + (r.description.length > 200 ? "..." : "") : undefined,
+      })),
+      source: "catalogue",
+      note: "These are from the full course catalogue. Section, schedule, and seat data are not available.",
+    };
+  },
+});
+
+export const getCourseHistory = tool({
+  description:
+    "Check when a course was offered across semesters. Use for questions like 'when is EN.601.433 typically offered?' or 'has this course been offered every fall?'",
+  inputSchema: z.object({
+    courseNumber: z.string().describe("Course offering name, e.g. 'EN.601.226'"),
+  }),
+  execute: async ({ courseNumber }) => {
+    const { data } = await supabase
+      .from("courses")
+      .select("offering_name, title, term, instructors_full_name, meetings, status, max_seats, open_seats")
+      .ilike("offering_name", `%${courseNumber}%`)
+      .order("term");
+
+    if (!data || data.length === 0) return { found: false, message: `No history found for ${courseNumber}.` };
+
+    const terms = [...new Set(data.map((r) => r.term))];
+    const byTerm = terms.map((term) => {
+      const sections = data.filter((r) => r.term === term);
+      return {
+        term,
+        sections: sections.length,
+        instructors: [...new Set(sections.map((s) => s.instructors_full_name).filter(Boolean))],
+        meetings: [...new Set(sections.map((s) => s.meetings).filter(Boolean))],
+      };
+    });
+
+    return {
+      found: true,
+      courseNumber: data[0].offering_name,
+      title: data[0].title,
+      termsOffered: terms,
+      history: byTerm,
+    };
+  },
+});
+
+export const getPrerequisiteChain = tool({
+  description:
+    "Recursively resolve the full prerequisite chain for a course. Use for questions like 'what do I need to take before EN.601.443?' Returns the full dependency tree.",
+  inputSchema: z.object({
+    courseNumber: z.string().describe("Course offering name, e.g. 'EN.601.443'"),
+  }),
+  execute: async ({ courseNumber }) => {
+    const codePattern = /[A-Z]{2}\.\d{3}\.\d{3}/g;
+    const visited = new Set<string>();
+    const chain: { code: string; title: string; prerequisites: string; depth: number }[] = [];
+
+    async function resolve(code: string, depth: number) {
+      if (visited.has(code) || depth > 5) return;
+      visited.add(code);
+
+      // Try catalogue first (has all courses), fall back to courses table
+      const { data: catRow } = await supabase
+        .from("catalogue")
+        .select("offering_name, title, prerequisites")
+        .eq("offering_name", code)
+        .limit(1)
+        .single();
+
+      const row = catRow || (await supabase
+        .from("courses")
+        .select("offering_name, title, prerequisites")
+        .eq("offering_name", code)
+        .limit(1)
+        .single()).data;
+
+      if (!row) return;
+
+      chain.push({
+        code: row.offering_name,
+        title: row.title,
+        prerequisites: row.prerequisites || "",
+        depth,
+      });
+
+      // Extract prerequisite course codes and recurse
+      const prereqCodes: string[] = row.prerequisites?.match(codePattern) || [];
+      const uniqueCodes = [...new Set(prereqCodes)];
+      for (const prereq of uniqueCodes) {
+        if (!visited.has(prereq)) {
+          await resolve(prereq, depth + 1);
+        }
+      }
+    }
+
+    await resolve(courseNumber, 0);
+
+    if (chain.length === 0) return { found: false, message: `Course ${courseNumber} not found.` };
+
+    return {
+      found: true,
+      root: courseNumber,
+      chain,
+      totalPrerequisites: chain.length - 1,
+    };
   },
 });
