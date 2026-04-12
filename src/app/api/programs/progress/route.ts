@@ -305,7 +305,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(await res.json());
   }
 
-  const schema = JSON.parse(schemaRow.schema) as { total_credits?: number; sections: Section[] };
+  const schema = (typeof schemaRow.schema === "string" ? JSON.parse(schemaRow.schema) : schemaRow.schema) as { total_credits?: number; sections: Section[] };
 
   const isGrad = /Master|PhD|Doctoral|MSE|MS\b/i.test(name);
   const otherIsGrad = otherPrograms.some((p) => /Master|PhD|Doctoral|MSE|MS\b/i.test(p));
@@ -357,7 +357,7 @@ export async function GET(req: NextRequest) {
     for (const otherName of otherPrograms) {
       const otherRow = await getProgramSchema(otherName);
       if (!otherRow) continue;
-      const otherSchema = JSON.parse(otherRow.schema) as { sections: Section[] };
+      const otherSchema = (typeof otherRow.schema === "string" ? JSON.parse(otherRow.schema) : otherRow.schema) as { sections: Section[] };
       const otherUsed = new Set<string>();
       for (const s of otherSchema.sections) evaluateSection(s, scheduled, otherUsed);
       function collectMatched(sections: Section[]): string[] {

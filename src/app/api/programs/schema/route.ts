@@ -8,11 +8,12 @@ export async function GET(req: NextRequest) {
     const row = await getProgramSchemaFull(name);
     if (!row) return NextResponse.json({ error: "No schema found" }, { status: 404 });
 
+    const schema = typeof row.schema === "string" ? JSON.parse(row.schema) : row.schema;
     return NextResponse.json({
       program_name: row.program_name,
       url: row.program_url ? `https://e-catalogue.jhu.edu${row.program_url}` : null,
       school: row.school,
-      ...JSON.parse(row.schema),
+      ...schema,
     });
   }
 
