@@ -1,14 +1,6 @@
 import { supabase } from "@/lib/supabase";
-import { getDb } from "@/lib/db";
+import { getCoursePosTags } from "@/lib/data";
 import { NextRequest, NextResponse } from "next/server";
-
-function getPosTags(code: string) {
-  const db = getDb();
-  const row = db
-    .prepare("SELECT pos_tags FROM courses WHERE offering_name = ? AND pos_tags != '' LIMIT 1")
-    .get(code) as { pos_tags: string } | undefined;
-  return row?.pos_tags ? row.pos_tags.split(",") : [];
-}
 
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
@@ -31,8 +23,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(data || null);
   }
 
-  // Get PosTags from SQLite
-  const posTags = getPosTags(code);
+  // Get PosTags
+  const posTags = await getCoursePosTags(code);
 
   // Try courses table first (term-scoped)
   const { data } = await supabase

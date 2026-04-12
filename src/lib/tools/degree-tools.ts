@@ -2,7 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { supabase } from "../supabase";
 import { getSessionId, getActiveTerm } from "./schedule-tools";
-import { getDb } from "../db";
+import { getPosTags, getVisiblePrograms, getProgramSchema } from "../data";
 
 function getCourseLevel(code: string): number {
   const parts = code.split(".");
@@ -23,11 +23,7 @@ async function getScheduledCourses(sessionId: string) {
     .select("offering_name, title, credits, areas, is_writing_intensive, term")
     .in("offering_name", codes);
 
-  const db = getDb();
-  const posRows = db
-    .prepare(`SELECT offering_name, pos_tags FROM courses WHERE offering_name IN (${codes.map(() => "?").join(",")}) AND pos_tags != '' GROUP BY offering_name`)
-    .all(...codes) as { offering_name: string; pos_tags: string }[];
-  const posMap = new Map(posRows.map((r) => [r.offering_name, r.pos_tags]));
+  const posMap = await getPosTags(codes);
 
   const seen = new Set<string>();
   return (courseData || []).filter((c) => {
@@ -48,20 +44,17 @@ export const checkDegreeProgress = tool({
     programName: z.string().optional().describe("Specific program to check. If omitted, checks all selected programs."),
   }),
   execute: async ({ programName }) => {
-    const db = getDb();
-
     let programs: string[];
     if (programName) {
       programs = [programName];
     } else {
-      const rows = db.prepare("SELECT program_name FROM program_schemas WHERE visible = 1").all() as { program_name: string }[];
+      const rows = await getVisiblePrograms();
       programs = rows.map((r) => r.program_name);
     }
 
     const results: Record<string, unknown>[] = [];
 
     for (const prog of programs) {
-      // Call the actual progress API internally — it has all the matching logic
       try {
         const url = `http://localhost:${process.env.PORT || 3000}/api/programs/progress?name=${encodeURIComponent(prog)}`;
         const res = await fetch(url, {
@@ -70,7 +63,6 @@ export const checkDegreeProgress = tool({
         if (!res.ok) continue;
         const data = await res.json();
 
-        // Extract summary from the full progress response
         function summarizeSections(sections: any[]): { name: string; status: string; progress: string; missing?: string }[] {
           const summaries: ReturnType<typeof summarizeSections> = [];
           for (const s of sections) {
@@ -146,47 +138,48 @@ export const findCoursesForRequirement = tool({
   }),
   execute: async ({ requirementType, value, minLevel, term }) => {
     const searchTerm = term || getActiveTerm();
-    const db = getDb();
 
     let results: { offering_name: string; title: string; credits: string; meetings: string; pos_tags: string }[] = [];
 
     if (requirementType === "pos_tag") {
-      // Find courses with this POS tag
-      const rows = db.prepare(`
-        SELECT DISTINCT c.offering_name, c.title, c.credits, c.meetings, c.pos_tags
-        FROM courses c
-        WHERE c.term = ? AND c.pos_tags LIKE ? AND c.status != 'Canceled'
-        ORDER BY c.offering_name LIMIT 20
-      `).all(searchTerm, `%${value}%`) as typeof results;
-      results = rows;
+      const { data } = await supabase
+        .from("courses")
+        .select("offering_name, title, credits, meetings, pos_tags")
+        .eq("term", searchTerm)
+        .neq("status", "Canceled")
+        .ilike("pos_tags", `%${value}%`)
+        .order("offering_name")
+        .limit(20);
+      results = data || [];
     } else if (requirementType === "area") {
-      // Find courses with this area designation
-      const rows = db.prepare(`
-        SELECT DISTINCT c.offering_name, c.title, c.credits, c.meetings, c.pos_tags
-        FROM courses c
-        WHERE c.term = ? AND (c.areas LIKE ? OR c.areas LIKE ?) AND c.status != 'Canceled'
-        ORDER BY c.offering_name LIMIT 20
-      `).all(searchTerm, `%${value},%`, `%,${value}%`) as typeof results;
-      // Also check standalone area letter
-      const rows2 = db.prepare(`
-        SELECT DISTINCT c.offering_name, c.title, c.credits, c.meetings, c.pos_tags
-        FROM courses c
-        WHERE c.term = ? AND c.areas LIKE ? AND c.status != 'Canceled'
-        ORDER BY c.offering_name LIMIT 20
-      `).all(searchTerm, `%${value}%`) as typeof results;
-      const seen = new Set(results.map((r) => r.offering_name));
-      for (const r of rows2) {
-        if (!seen.has(r.offering_name)) results.push(r);
-      }
+      const { data } = await supabase
+        .from("courses")
+        .select("offering_name, title, credits, meetings, pos_tags")
+        .eq("term", searchTerm)
+        .neq("status", "Canceled")
+        .ilike("areas", `%${value}%`)
+        .order("offering_name")
+        .limit(20);
+      results = data || [];
     } else if (requirementType === "prefix") {
-      const rows = db.prepare(`
-        SELECT DISTINCT c.offering_name, c.title, c.credits, c.meetings, c.pos_tags
-        FROM courses c
-        WHERE c.term = ? AND c.offering_name LIKE ? AND c.status != 'Canceled'
-        ORDER BY c.offering_name LIMIT 20
-      `).all(searchTerm, `${value}%`) as typeof results;
-      results = rows;
+      const { data } = await supabase
+        .from("courses")
+        .select("offering_name, title, credits, meetings, pos_tags")
+        .eq("term", searchTerm)
+        .neq("status", "Canceled")
+        .ilike("offering_name", `${value}%`)
+        .order("offering_name")
+        .limit(20);
+      results = data || [];
     }
+
+    // Deduplicate by offering_name
+    const seen = new Set<string>();
+    results = results.filter((r) => {
+      if (seen.has(r.offering_name)) return false;
+      seen.add(r.offering_name);
+      return true;
+    });
 
     // Apply level filter
     if (minLevel) {
@@ -212,8 +205,7 @@ export const getAvailablePrograms = tool({
     "List available degree programs that have requirement schemas. Use when the user asks 'what programs are available?', 'what majors can I track?', etc.",
   inputSchema: z.object({}),
   execute: async () => {
-    const db = getDb();
-    const rows = db.prepare("SELECT program_name, school FROM program_schemas WHERE visible = 1 ORDER BY program_name").all() as { program_name: string; school: string }[];
+    const rows = await getVisiblePrograms();
     return { programs: rows };
   },
 });

@@ -1,15 +1,11 @@
-import { getDb } from "@/lib/db";
+import { getProgramSchemaFull, getVisiblePrograms } from "@/lib/data";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
   const name = req.nextUrl.searchParams.get("name");
-  const db = getDb();
 
   if (name) {
-    const row = db
-      .prepare("SELECT program_name, program_url, school, schema FROM program_schemas WHERE program_name = ?")
-      .get(name) as { program_name: string; program_url: string; school: string; schema: string } | undefined;
-
+    const row = await getProgramSchemaFull(name);
     if (!row) return NextResponse.json({ error: "No schema found" }, { status: 404 });
 
     return NextResponse.json({
@@ -21,9 +17,6 @@ export async function GET(req: NextRequest) {
   }
 
   // List visible programs with schemas
-  const rows = db
-    .prepare("SELECT program_name, school FROM program_schemas WHERE visible = 1 ORDER BY school, program_name")
-    .all() as { program_name: string; school: string }[];
-
+  const rows = await getVisiblePrograms();
   return NextResponse.json(rows);
 }

@@ -2,7 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { supabase } from "../supabase";
 import { getSessionId } from "./schedule-tools";
-import { getDb } from "../db";
+import { searchProgramsWithCounts, getProgramTagCodes } from "../data";
 
 export const saveRequirements = tool({
   description:
@@ -113,7 +113,6 @@ export const checkRequirements = tool({
     program_name: z.string().optional().describe("Program to check. If omitted, checks the first saved program."),
   }),
   execute: async (input) => {
-    // 1. Get requirements
     let reqQuery = supabase
       .from("program_requirements")
       .select("program_name, requirements")
@@ -143,7 +142,6 @@ export const checkRequirements = tool({
       notes?: string;
     };
 
-    // 2. Get ALL scheduled courses across ALL terms
     const { data: scheduleRows } = await supabase
       .from("schedules")
       .select("offering_name, section_name, term")
@@ -153,11 +151,9 @@ export const checkRequirements = tool({
       (scheduleRows || []).map((r) => r.offering_name)
     );
 
-    // Add completed courses
     const completedCodes = new Set(reqs.completed_courses || []);
     const allCodes = new Set([...allScheduledCodes, ...completedCodes]);
 
-    // 3. Get course details for scheduled courses
     let courseDetails: {
       offering_name: string;
       title: string;
@@ -169,14 +165,12 @@ export const checkRequirements = tool({
     }[] = [];
 
     if (allScheduledCodes.size > 0) {
-      // Fetch unique courses (deduplicated by offering_name)
       const { data } = await supabase
         .from("courses")
         .select("offering_name, title, credits, department, level, areas, term")
         .in("offering_name", [...allScheduledCodes]);
 
       if (data) {
-        // Deduplicate by offering_name (take first occurrence)
         const seen = new Set<string>();
         courseDetails = data.filter((c) => {
           if (seen.has(c.offering_name)) return false;
@@ -186,7 +180,6 @@ export const checkRequirements = tool({
       }
     }
 
-    // 4. Check required courses
     const requiredStatus = (reqs.required_courses || []).map((code) => ({
       code,
       fulfilled: allCodes.has(code),
@@ -197,7 +190,6 @@ export const checkRequirements = tool({
         : "missing",
     }));
 
-    // 5. Check elective groups
     const electiveStatus = (reqs.elective_groups || []).map((group) => {
       const matching = courseDetails.filter((c) => {
         if (group.course_codes && group.course_codes.length > 0) {
@@ -222,7 +214,6 @@ export const checkRequirements = tool({
       };
     });
 
-    // 6. Check area requirements
     const areaStatus = (reqs.area_requirements || []).map((area) => {
       const matching = courseDetails.filter(
         (c) => c.areas && c.areas.toLowerCase().includes(area.area.toLowerCase())
@@ -237,11 +228,8 @@ export const checkRequirements = tool({
       };
     });
 
-    // 7. Total credits
     const totalCredits = courseDetails.reduce((sum, c) => sum + (parseFloat(c.credits) || 0), 0);
-    const completedCredits = 0; // Can't know credits for completed_courses without lookup
 
-    // 8. Per-term breakdown
     const termBreakdown: Record<string, number> = {};
     for (const row of scheduleRows || []) {
       const course = courseDetails.find((c) => c.offering_name === row.offering_name);
@@ -336,58 +324,36 @@ export const lookupProgramRequirements = tool({
     search: z.string().optional().describe("Search query to find programs. Use when user says 'CS major' or 'French minor'."),
   }),
   execute: async (input) => {
-    const db = getDb();
-
-    // If searching, return matching program names
     if (input.search) {
-      const rows = db
-        .prepare(
-          `SELECT DISTINCT program_name, school, COUNT(offering_name) as course_count
-           FROM program_tags WHERE program_name LIKE ? GROUP BY program_name ORDER BY program_name`
-        )
-        .all(`%${input.search}%`) as { program_name: string; school: string; course_count: number }[];
-
+      const rows = await searchProgramsWithCounts(input.search);
       if (rows.length === 0) return { found: false, message: `No programs found matching "${input.search}".` };
       return { found: true, programs: rows };
     }
 
-    // Look up specific program
     if (!input.programName) return { found: false, message: "Provide a program name or search query." };
 
-    const rows = db
-      .prepare(
-        `SELECT requirement_group, offering_name, course_title, credits, requirement_type, is_alternative, notes
-         FROM program_tags WHERE program_name = ? ORDER BY id`
-      )
-      .all(input.programName) as {
-      requirement_group: string;
-      offering_name: string | null;
-      course_title: string;
-      credits: string;
-      requirement_type: string;
-      is_alternative: number;
-      notes: string;
-    }[];
+    const { data: rows } = await supabase
+      .from("program_tags")
+      .select("section_h2, offering_name, course_title, credits, requirement_type, is_alternative, notes")
+      .eq("program_name", input.programName)
+      .order("id");
 
-    if (rows.length === 0) {
-      // Try partial match
-      const partial = db
-        .prepare(`SELECT DISTINCT program_name FROM program_tags WHERE program_name LIKE ? LIMIT 5`)
-        .all(`%${input.programName}%`) as { program_name: string }[];
+    if (!rows || rows.length === 0) {
+      const partial = await searchProgramsWithCounts(input.programName);
       if (partial.length > 0) {
         return { found: false, message: `Exact match not found. Did you mean: ${partial.map((p) => p.program_name).join(", ")}?` };
       }
       return { found: false, message: `No program found matching "${input.programName}".` };
     }
 
-    // Group by requirement_group
     const groups: Record<string, { courses: { code: string; title: string; credits: string; isAlt: boolean }[]; notes: string[] }> = {};
     const allRequiredCodes: string[] = [];
 
     for (const r of rows) {
-      if (!groups[r.requirement_group]) groups[r.requirement_group] = { courses: [], notes: [] };
+      const groupKey = r.section_h2 || "General";
+      if (!groups[groupKey]) groups[groupKey] = { courses: [], notes: [] };
       if (r.offering_name) {
-        groups[r.requirement_group].courses.push({
+        groups[groupKey].courses.push({
           code: r.offering_name,
           title: r.course_title,
           credits: r.credits,
@@ -396,7 +362,7 @@ export const lookupProgramRequirements = tool({
         if (r.requirement_type === "required") allRequiredCodes.push(r.offering_name);
       }
       if (r.notes && r.requirement_type === "comment") {
-        groups[r.requirement_group].notes.push(r.notes);
+        groups[groupKey].notes.push(r.notes);
       }
     }
 
@@ -417,14 +383,7 @@ export const loadProgramAsRequirements = tool({
     programName: z.string().describe("Exact program name from lookupProgramRequirements, e.g. 'Computer Science, Bachelor of Science'"),
   }),
   execute: async ({ programName }) => {
-    const db = getDb();
-
-    const rows = db
-      .prepare(
-        `SELECT offering_name, requirement_type FROM program_tags
-         WHERE program_name = ? AND offering_name IS NOT NULL ORDER BY id`
-      )
-      .all(programName) as { offering_name: string; requirement_type: string }[];
+    const rows = await getProgramTagCodes(programName);
 
     if (rows.length === 0) return { success: false, message: `No requirements found for "${programName}".` };
 

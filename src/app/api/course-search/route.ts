@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { getDb } from "@/lib/db";
+import { getPosTags, getCataloguePosTags } from "@/lib/data";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
@@ -11,7 +11,6 @@ export async function GET(req: NextRequest) {
 
   const isCode = /^[A-Z]{2}[.\d]/i.test(q);
   const col = isCode ? "offering_name" : "title";
-  const db = getDb();
 
   // For past terms: search across ALL terms, deduplicate by offering_name, show one result per course
   if (mode === "past") {
@@ -34,10 +33,7 @@ export async function GET(req: NextRequest) {
       const deduped = [...byCode.values()].slice(0, 12);
 
       const codes = [...new Set(deduped.map((r) => r.offering_name))];
-      const tagRows = db
-        .prepare(`SELECT offering_name, pos_tags FROM courses WHERE offering_name IN (${codes.map(() => "?").join(",")}) AND pos_tags != '' GROUP BY offering_name`)
-        .all(...codes) as { offering_name: string; pos_tags: string }[];
-      const tagMap = new Map(tagRows.map((r) => [r.offering_name, r.pos_tags]));
+      const tagMap = await getPosTags(codes);
 
       return NextResponse.json(
         deduped.map((r) => ({ ...r, pos_tags: tagMap.get(r.offering_name) || null }))
@@ -58,10 +54,7 @@ export async function GET(req: NextRequest) {
 
     if (catData && catData.length > 0) {
       const codes = [...new Set(catData.map((r) => r.offering_name))];
-      const tagRows = db
-        .prepare(`SELECT offering_name, pos_tags FROM catalogue WHERE offering_name IN (${codes.map(() => "?").join(",")}) AND pos_tags != ''`)
-        .all(...codes) as { offering_name: string; pos_tags: string }[];
-      const tagMap = new Map(tagRows.map((r) => [r.offering_name, r.pos_tags]));
+      const tagMap = await getCataloguePosTags(codes);
 
       return NextResponse.json(
         catData.map((r) => ({
@@ -84,10 +77,7 @@ export async function GET(req: NextRequest) {
 
   if (data && data.length > 0) {
     const codes = [...new Set(data.map((r) => r.offering_name))];
-    const tagRows = db
-      .prepare(`SELECT offering_name, pos_tags FROM courses WHERE offering_name IN (${codes.map(() => "?").join(",")}) AND pos_tags != '' GROUP BY offering_name`)
-      .all(...codes) as { offering_name: string; pos_tags: string }[];
-    const tagMap = new Map(tagRows.map((r) => [r.offering_name, r.pos_tags]));
+    const tagMap = await getPosTags(codes);
 
     return NextResponse.json(
       data.map((r) => ({ ...r, pos_tags: tagMap.get(r.offering_name) || null }))
