@@ -161,6 +161,9 @@ export const findNonConflictingCourses = tool({
     instructionMethod: z.enum(["in-person", "online", "blended"]).optional().describe("Instruction method"),
     credits: z.string().optional().describe("Credit amount, e.g. '3.00'"),
     daysOfWeek: z.string().optional().describe("Day pattern, e.g. 'MWF', 'TTh'. Only courses on these exact days."),
+    timeOfDay: z.enum(["Morning", "Afternoon", "Evening", "Other"]).optional().describe("Time of day bucket."),
+    beforeTime: z.string().optional().describe("Only courses that END before this time, e.g. '12:00PM', '3:00PM'. Use for 'before noon' → '12:00PM', 'before 2pm' → '2:00PM'."),
+    afterTime: z.string().optional().describe("Only courses that START at or after this time, e.g. '12:00PM', '5:00PM'. Use for 'after noon' → '12:00PM', 'evening classes' → '5:00PM'."),
     limit: z.number().optional().describe("Max results (default 20, max 50)"),
     ignoreCourses: z
       .array(z.string())
@@ -239,6 +242,7 @@ export const findNonConflictingCourses = tool({
     if (input.status) query = query.eq("status", input.status);
     if (input.credits) query = query.or(`credits.eq.${input.credits},credits.ilike.%${input.credits}%`);
     if (input.daysOfWeek) query = query.ilike("meetings", `${input.daysOfWeek} %`);
+    if (input.timeOfDay) query = query.eq("time_of_day", input.timeOfDay);
     if (input.instructionMethod) {
       const m = input.instructionMethod.toLowerCase();
       if (m === "in-person") query = query.or("instruction_method.ilike.%in-person%,instruction_method.ilike.lecture");
@@ -249,12 +253,36 @@ export const findNonConflictingCourses = tool({
     const { data: candidates } = await query;
     if (!candidates || candidates.length === 0) return { count: 0, courses: [] };
 
-    // 3. Filter out conflicts and already-scheduled courses
+    // Parse beforeTime/afterTime into minutes for client-side filtering
+    function parseTimeToMin(t: string): number | null {
+      const m = t.match(/^(\d{1,2}):(\d{2})(AM|PM)$/);
+      if (!m) return null;
+      let h = parseInt(m[1]);
+      if (m[3] === "PM" && h !== 12) h += 12;
+      if (m[3] === "AM" && h === 12) h = 0;
+      return h * 60 + parseInt(m[2]);
+    }
+    const beforeMin = input.beforeTime ? parseTimeToMin(input.beforeTime) : null;
+    const afterMin = input.afterTime ? parseTimeToMin(input.afterTime) : null;
+
+    // 3. Filter out conflicts, already-scheduled courses, and time constraints
     const maxResults = Math.min(input.limit || 20, 50);
     const nonConflicting = candidates.filter((course) => {
       if (scheduledCodes.has(course.offering_name)) return false;
       if (!course.meetings) return false;
-      return !scheduledMeetings.some((sm) => hasConflict(sm, course.meetings));
+      if (scheduledMeetings.some((sm) => hasConflict(sm, course.meetings))) return false;
+
+      // Time range filter: check ALL meeting parts
+      if (beforeMin !== null || afterMin !== null) {
+        const blocks = parseMeetingTime(course.meetings);
+        if (blocks.length === 0) return false;
+        for (const b of blocks) {
+          if (beforeMin !== null && b.endMin > beforeMin) return false;
+          if (afterMin !== null && b.startMin < afterMin) return false;
+        }
+      }
+
+      return true;
     }).slice(0, maxResults);
 
     return {
