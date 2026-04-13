@@ -1047,7 +1047,9 @@ export default function Home() {
 
                     const st = isManualComplete ? "complete" : s.status;
                     const dot = st === "complete" ? "bg-emerald-400" : st === "in_progress" ? "bg-amber-400" : "bg-slate-300";
-                    const matched = s.matched_courses || [];
+                    // Don't show matched courses on sections that have subsections — let children display them
+                    const hasChildren = (s.subsections && s.subsections.length > 0) || s.is_chooseable_group;
+                    const matched = hasChildren ? [] : (s.matched_courses || []);
                     const matchedCodes = new Set(matched.map((m) => m.code));
 
                     let prog = "";
