@@ -1610,7 +1610,18 @@ export default function Home() {
                       </div>
                       <div className="col-span-2">
                         <span className="text-slate-400">Instructor</span>
-                        <p className="text-slate-700 font-medium">{selected.instructors_full_name || "Staff"}</p>
+                        <p className="text-slate-700 font-medium">
+                          {selected.instructors_full_name || "Staff"}
+                          {selected.instructors_full_name && selected.instructors_full_name !== "Staff" && (
+                            <a
+                              href={`https://scholar.google.com/citations?view_op=search_authors&mauthors=${encodeURIComponent(selected.instructors_full_name.split(";")[0].trim())}+Johns+Hopkins`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="ml-1.5 text-[10px] text-blue-400 hover:text-blue-600"
+                              title="Search Google Scholar"
+                            >Scholar ↗</a>
+                          )}
+                        </p>
                       </div>
                     </div>
 
