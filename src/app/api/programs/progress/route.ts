@@ -89,11 +89,13 @@ function evaluateSection(section: Section, scheduled: ScheduledCourse[], usedCod
       if (subCredits > bestCredits) { bestCredits = subCredits; bestSub = sub; }
     }
     const needed = section.credits_required || 0;
-    section.status = bestSub?.status === "complete" || bestCredits >= needed
+    const bestSubComplete = bestSub?.status === "complete";
+    const creditsMetIfRequired = needed > 0 && bestCredits >= needed;
+    section.status = bestSubComplete || creditsMetIfRequired
       ? "complete" : bestCredits > 0 ? "in_progress" : "incomplete";
     section.matched_courses = bestSub?.matched_courses || [];
-    section.fulfilled = Math.min(bestCredits, needed);
-    section.total = needed || 1;
+    section.fulfilled = Math.min(bestCredits, needed || bestCredits);
+    section.total = needed || (bestSub?.total || 1);
     return;
   }
 
