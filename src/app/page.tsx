@@ -1161,8 +1161,8 @@ export default function Home() {
                               </div>
                             )}
 
-                            {/* POS tags */}
-                            {s.pos_tags && s.pos_tags.length > 0 && (
+                            {/* POS tags — skip if area_labels already covers the same tags */}
+                            {s.pos_tags && s.pos_tags.length > 0 && !(s.area_labels && s.area_labels.length > 0) && (
                               <div className="space-y-0.5 mb-1">
                                 {s.pos_tags.map((tag) => {
                                   const tagMatches = matched.filter((m) => m.matched_by.includes(tag));
