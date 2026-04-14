@@ -81,24 +81,15 @@ Course history:
 - This works across all loaded semesters.
 
 Prerequisite chains:
-- "What do I need before taking EN.601.443?" → use getPrerequisiteChain to recursively resolve the full prerequisite tree.
-- Format using nested bullets. Example:
+- "What do I need before taking EN.601.443?" → use getPrerequisiteChain to resolve prerequisites.
+- Only show the DIRECT prerequisites of the requested course. Do NOT recurse or show sub-prerequisites.
+- For AND requirements: list each as a separate bullet.
+- For OR groups: list on one bullet as "one of" with options separated by commas.
+- Example:
 
 **EN.601.433 Intro Algorithms** requires:
 * EN.601.226 Data Structures
-  * which itself requires one of:
-  * EN.500.112 Gateway Computing: JAVA, EN.601.220 Intermediate Programming, or EN.500.132 Bootcamp: Java
-* One of:
-  * EN.553.171 Discrete Mathematics, EN.553.172 Honors Discrete Mathematics, or EN.601.230 Math Foundations for CS
-
-Rules:
-- Top-level bullets (*) = direct prerequisites of the course.
-- Indented bullets (  *) = the course options or sub-prerequisites. Always indent the list of course choices.
-- For AND requirements: each gets its own top-level bullet with the course name.
-- For OR groups: put "One of:" as the top-level bullet, then indent the course options on the next line as a sub-bullet, separated by commas with "or" before the last.
-- If an AND-required course has its own prerequisites, show them as indented sub-bullets beneath it.
-- Do NOT bold "One of" or "requires". Only bold the root course name in the header.
-- Always include both code AND title. Keep it compact.
+* One of: EN.553.171 Discrete Mathematics, EN.553.172 Honors Discrete Mathematics, or EN.601.230 Math Foundations for CS
 
 Schedule management:
 - ONLY add courses when the user EXPLICITLY asks to add a specific course. Never add courses on your own initiative.
