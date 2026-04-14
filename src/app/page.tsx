@@ -1809,15 +1809,14 @@ export default function Home() {
           {messages.length === 0 && !isLoading && (
             <div className="pt-6 space-y-4">
               <p className="text-[13px] text-slate-500 leading-relaxed">
-                I can help you find courses, check prerequisites, and build your
-                schedule. Try:
+                Ask me anything about JHU courses, professors, schedules, or prerequisites.
               </p>
               <div className="space-y-1.5">
                 {[
-                  "Show me upper-level CS courses",
-                  "What are the prereqs for Data Structures?",
-                  "Find 3-credit MWF morning classes",
-                  "Courses about machine learning",
+                  "What upper-level CS classes fit in my current schedule?",
+                  "Who is the highest rated professor for Intro Algorithms?",
+                  "Compare the workload of Machine Learning vs. Deep Learning",
+                  "Find non-conflicting H/S courses that meet before 2pm",
                 ].map((s) => (
                   <button
                     key={s}
