@@ -765,7 +765,7 @@ export default function Home() {
       {/* ---- LEFT: Schedule ---- */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
-        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0 relative z-[100]">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0 relative z-[100]">
           {/* Title + Enrollment + Term */}
           <div className="flex items-center gap-2 shrink-0">
             <h1 className="text-sm font-semibold text-slate-900 tracking-tight">JHU Planner</h1>
@@ -1789,8 +1789,8 @@ export default function Home() {
       {/* ---- RIGHT: Chat ---- */}
       <aside className="w-[380px] shrink-0 border-l border-slate-200 bg-white flex flex-col">
         {/* Chat header — aligned with left top bar */}
-        <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
-          <p className="text-sm font-semibold text-slate-900 tracking-tight">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
+          <p className="text-base font-semibold text-slate-900 tracking-tight">
             Course Assistant
           </p>
           {messages.length > 0 && (
