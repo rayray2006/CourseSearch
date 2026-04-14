@@ -1816,7 +1816,7 @@ export default function Home() {
                   "What are the highest rated courses with the lightest workload?",
                   "Who are the best rated CS professors teaching this semester?",
                   "What do I need to take before I can take Intro Algorithms?",
-                  "Show me all the classes Professor Madooei is teaching and their ratings",
+                  "What courses is Ali Madooei teaching this semester?",
                 ].map((s) => (
                   <button
                     key={s}
