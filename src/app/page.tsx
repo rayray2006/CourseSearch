@@ -358,6 +358,8 @@ export default function Home() {
   const searchRef = useRef<HTMLDivElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [expandedSearchCourse, setExpandedSearchCourse] = useState<string | null>(null);
+  const [expandedSections, setExpandedSections] = useState<typeof searchResults>([]);
+  const [expandedLoading, setExpandedLoading] = useState(false);
 
   // Debounced search via API
   const doSearch = useCallback(async (q: string) => {
@@ -796,11 +798,11 @@ export default function Home() {
                   {[...grouped.entries()].map(([code, sections]) => {
                     const first = sections[0];
                     const isCatalogue = !!(first as { source?: string }).source;
-                    const hasAnySectionInSchedule = sections.some((s) => schedule.some((sc) => sc.offering_name === s.offering_name && sc.section_name === s.section_name));
-                    const allInSchedule = isCatalogue ? schedule.some((s) => s.offering_name === code) : sections.every((s) => schedule.some((sc) => sc.offering_name === s.offering_name && sc.section_name === s.section_name));
+                    const courseInSchedule = schedule.some((s) => s.offering_name === code);
                     const dc = deptColor(first.department);
                     const isExpanded = expandedSearchCourse === code;
-                    const hasMultiple = sections.length > 1 && !isCatalogue && !isPastTerm;
+                    const visibleSections = isExpanded ? expandedSections : sections;
+                    const canExpand = !isCatalogue && !isPastTerm;
 
                     const addSection = async (r: typeof first) => {
                       const sectionName = isCatalogue ? "PLAN" : isPastTerm ? "TAKEN" : r.section_name;
@@ -814,33 +816,53 @@ export default function Home() {
                       setSearchQuery("");
                       setSearchOpen(false);
                       setExpandedSearchCourse(null);
+                      setExpandedSections([]);
+                    };
+
+                    const expandCourse = async () => {
+                      if (isExpanded) { setExpandedSearchCourse(null); setExpandedSections([]); return; }
+                      setExpandedSearchCourse(code);
+                      setExpandedLoading(true);
+                      try {
+                        const res = await fetch(`/api/course-search?q=${encodeURIComponent(code)}&term=${encodeURIComponent(activeTerm)}&mode=term`);
+                        if (res.ok) {
+                          const all = (await res.json()) as typeof searchResults;
+                          const forCode = all.filter((r) => r.offering_name === code);
+                          setExpandedSections(forCode.length > 0 ? forCode : sections);
+                        } else {
+                          setExpandedSections(sections);
+                        }
+                      } catch { setExpandedSections(sections); }
+                      setExpandedLoading(false);
                     };
 
                     return (
                       <div key={code}>
                         <button
                           onClick={() => {
-                            if (allInSchedule) return;
-                            if (hasMultiple) {
-                              setExpandedSearchCourse(isExpanded ? null : code);
+                            if (courseInSchedule && !canExpand) return;
+                            if (canExpand) {
+                              expandCourse();
                             } else {
                               addSection(first);
                             }
                           }}
-                          className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${allInSchedule ? "opacity-40 cursor-default" : "hover:bg-slate-50 cursor-pointer"}`}
+                          className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${courseInSchedule && !canExpand ? "opacity-40 cursor-default" : "hover:bg-slate-50 cursor-pointer"}`}
                         >
                           <div className="w-1 self-stretch rounded-full shrink-0" style={{ backgroundColor: dc.border }} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
                               <span className="text-[10px] font-mono font-semibold" style={{ color: dc.text }}>{code}</span>
                               {first.credits && <span className="text-[9px] text-slate-300">{first.credits}cr</span>}
-                              {hasMultiple && <span className="text-[9px] text-slate-400 bg-slate-100 rounded px-1">{sections.length} sections</span>}
                             </div>
                             <div className="text-[11px] text-slate-700 truncate">{first.title}</div>
-                            {!hasMultiple && (
+                            {(!canExpand || isCatalogue) && (
                               <div className="text-[9px] text-slate-400 truncate">
                                 {isCatalogue ? (first.department || "Catalogue") : `${first.meetings || "TBA"} · ${first.instructors_full_name || "Staff"}`}
                               </div>
+                            )}
+                            {canExpand && !isExpanded && (
+                              <div className="text-[9px] text-slate-400">Click to choose section</div>
                             )}
                             {first.pos_tags && (
                               <div className="flex gap-1 mt-0.5 flex-wrap">
@@ -850,15 +872,17 @@ export default function Home() {
                               </div>
                             )}
                           </div>
-                          {allInSchedule && <span className="text-[8px] text-emerald-500 font-semibold shrink-0 mt-1">ADDED</span>}
-                          {hasMultiple && !allInSchedule && (
+                          {courseInSchedule && <span className="text-[8px] text-emerald-500 font-semibold shrink-0 mt-1">ADDED</span>}
+                          {canExpand && !courseInSchedule && (
                             <svg className={`w-3.5 h-3.5 text-slate-400 shrink-0 mt-1 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
                           )}
                         </button>
                         {/* Section picker */}
                         {isExpanded && (
                           <div className="bg-slate-50/80 border-t border-slate-100">
-                            {sections.map((r, si) => {
+                            {expandedLoading ? (
+                              <div className="px-7 py-2 text-[10px] text-slate-400">Loading sections...</div>
+                            ) : visibleSections.map((r, si) => {
                               const secInSchedule = schedule.some((sc) => sc.offering_name === r.offering_name && sc.section_name === r.section_name);
                               return (
                                 <button
@@ -1765,8 +1789,8 @@ export default function Home() {
       {/* ---- RIGHT: Chat ---- */}
       <aside className="w-[380px] shrink-0 border-l border-slate-200 bg-white flex flex-col">
         {/* Chat header — aligned with left top bar */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
-          <p className="text-base font-semibold text-slate-900 tracking-tight">
+        <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
+          <p className="text-sm font-semibold text-slate-900 tracking-tight">
             Course Assistant
           </p>
           {messages.length > 0 && (
