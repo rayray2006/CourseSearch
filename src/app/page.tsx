@@ -357,6 +357,7 @@ export default function Home() {
   const [searchLoading, setSearchLoading] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [expandedSearchCourse, setExpandedSearchCourse] = useState<string | null>(null);
 
   // Debounced search via API
   const doSearch = useCallback(async (q: string) => {
@@ -373,7 +374,7 @@ export default function Home() {
 
   useEffect(() => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    if (searchQuery.length < 2) { setSearchResults([]); return; }
+    if (searchQuery.length < 2) { setSearchResults([]); setExpandedSearchCourse(null); return; }
     searchTimerRef.current = setTimeout(() => doSearch(searchQuery), 250);
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
   }, [searchQuery, doSearch]);
@@ -766,26 +767,7 @@ export default function Home() {
           {/* Title + Enrollment + Term */}
           <div className="flex items-center gap-2 shrink-0">
             <h1 className="text-sm font-semibold text-slate-900 tracking-tight">JHU Planner</h1>
-            {/* Enrollment period */}
-            <div className="flex items-center gap-0.5 text-[10px] text-slate-400">
-              <input
-                type="text"
-                value={enrollStart}
-                onChange={(e) => setEnrollStart(e.target.value.toUpperCase().slice(0, 3))}
-                placeholder="F24"
-                className="w-[32px] text-center text-[10px] font-mono font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded px-0.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-200 focus:border-blue-300"
-              />
-              <span className="text-slate-300">–</span>
-              <input
-                type="text"
-                value={enrollEnd}
-                onChange={(e) => setEnrollEnd(e.target.value.toUpperCase().slice(0, 3))}
-                placeholder="S27"
-                className="w-[32px] text-center text-[10px] font-mono font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded px-0.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-200 focus:border-blue-300"
-              />
-            </div>
-            {/* Term label (fixed) */}
-            <span className="text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1">{activeTerm}</span>
+            <span className="text-[11px] font-medium text-slate-500">{activeTerm}</span>
           </div>
 
           {/* Search bar */}
@@ -802,65 +784,105 @@ export default function Home() {
                 />
                 {searchLoading && <div className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 border-2 border-slate-200 border-t-blue-400 rounded-full animate-spin" />}
               </div>
-              {searchOpen && searchResults.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-slate-200 rounded-lg shadow-lg py-1 max-h-[320px] overflow-auto">
-                  {searchResults.map((r, i) => {
-                    const isCatalogue = !!(r as { source?: string }).source;
-                    const isInSchedule = isCatalogue
-                      ? schedule.some((s) => s.offering_name === r.offering_name)
-                      : schedule.some((s) => s.offering_name === r.offering_name && s.section_name === r.section_name);
-                    const dc = deptColor(r.department);
+              {searchOpen && searchResults.length > 0 && (() => {
+                // Group results by offering_name
+                const grouped = new Map<string, typeof searchResults>();
+                for (const r of searchResults) {
+                  if (!grouped.has(r.offering_name)) grouped.set(r.offering_name, []);
+                  grouped.get(r.offering_name)!.push(r);
+                }
+                return (
+                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-slate-200 rounded-lg shadow-lg py-1 max-h-[400px] overflow-auto">
+                  {[...grouped.entries()].map(([code, sections]) => {
+                    const first = sections[0];
+                    const isCatalogue = !!(first as { source?: string }).source;
+                    const hasAnySectionInSchedule = sections.some((s) => schedule.some((sc) => sc.offering_name === s.offering_name && sc.section_name === s.section_name));
+                    const allInSchedule = isCatalogue ? schedule.some((s) => s.offering_name === code) : sections.every((s) => schedule.some((sc) => sc.offering_name === s.offering_name && sc.section_name === s.section_name));
+                    const dc = deptColor(first.department);
+                    const isExpanded = expandedSearchCourse === code;
+                    const hasMultiple = sections.length > 1 && !isCatalogue && !isPastTerm;
+
+                    const addSection = async (r: typeof first) => {
+                      const sectionName = isCatalogue ? "PLAN" : isPastTerm ? "TAKEN" : r.section_name;
+                      await fetch("/api/schedule", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ offering_name: r.offering_name, section_name: sectionName, term: activeTerm }),
+                      });
+                      fetchSchedule();
+                      clearPreview();
+                      setSearchQuery("");
+                      setSearchOpen(false);
+                      setExpandedSearchCourse(null);
+                    };
+
                     return (
-                      <button
-                        key={`${r.offering_name}-${r.section_name}-${i}`}
-                        onClick={async () => {
-                          if (isInSchedule) return;
-                          const sectionName = isCatalogue ? "PLAN" : isPastTerm ? "TAKEN" : r.section_name;
-                          await fetch("/api/schedule", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ offering_name: r.offering_name, section_name: sectionName, term: activeTerm }),
-                          });
-                          fetchSchedule();
-                          clearPreview();
-                          setSearchQuery("");
-                          setSearchOpen(false);
-                        }}
-                        onMouseEnter={() => {
-                          if (!isCatalogue && r.section_name && hasSisData) {
-                            handlePreview(r.offering_name, r.section_name);
-                          }
-                        }}
-                        onMouseLeave={clearPreview}
-                        className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${isInSchedule ? "opacity-40 cursor-default" : "hover:bg-slate-50 cursor-pointer"}`}
-                      >
-                        <div className="w-1 self-stretch rounded-full shrink-0" style={{ backgroundColor: dc.border }} />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-mono font-semibold" style={{ color: dc.text }}>{r.offering_name}</span>
-                            {r.section_name && <span className="text-[9px] text-slate-300">§{r.section_name}</span>}
-                            {r.credits && <span className="text-[9px] text-slate-300">{r.credits}cr</span>}
-                          </div>
-                          <div className="text-[11px] text-slate-700 truncate">{r.title}</div>
-                          <div className="text-[9px] text-slate-400 truncate">
-                            {isCatalogue ? (r.department || "Catalogue") : `${r.meetings || "TBA"} · ${r.instructors_full_name || "Staff"}`}
-                          </div>
-                          {r.pos_tags && (
-                            <div className="flex gap-1 mt-0.5 flex-wrap">
-                              {r.pos_tags.split(",").slice(0, 4).map((tag) => (
-                                <span key={tag} className="text-[7px] font-mono font-semibold text-blue-500 bg-blue-50 rounded px-1">{tag}</span>
-                              ))}
+                      <div key={code}>
+                        <button
+                          onClick={() => {
+                            if (allInSchedule) return;
+                            if (hasMultiple) {
+                              setExpandedSearchCourse(isExpanded ? null : code);
+                            } else {
+                              addSection(first);
+                            }
+                          }}
+                          className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${allInSchedule ? "opacity-40 cursor-default" : "hover:bg-slate-50 cursor-pointer"}`}
+                        >
+                          <div className="w-1 self-stretch rounded-full shrink-0" style={{ backgroundColor: dc.border }} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-mono font-semibold" style={{ color: dc.text }}>{code}</span>
+                              {first.credits && <span className="text-[9px] text-slate-300">{first.credits}cr</span>}
+                              {hasMultiple && <span className="text-[9px] text-slate-400 bg-slate-100 rounded px-1">{sections.length} sections</span>}
                             </div>
+                            <div className="text-[11px] text-slate-700 truncate">{first.title}</div>
+                            {!hasMultiple && (
+                              <div className="text-[9px] text-slate-400 truncate">
+                                {isCatalogue ? (first.department || "Catalogue") : `${first.meetings || "TBA"} · ${first.instructors_full_name || "Staff"}`}
+                              </div>
+                            )}
+                            {first.pos_tags && (
+                              <div className="flex gap-1 mt-0.5 flex-wrap">
+                                {first.pos_tags.split(",").slice(0, 4).map((tag) => (
+                                  <span key={tag} className="text-[7px] font-mono font-semibold text-blue-500 bg-blue-50 rounded px-1">{tag}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          {allInSchedule && <span className="text-[8px] text-emerald-500 font-semibold shrink-0 mt-1">ADDED</span>}
+                          {hasMultiple && !allInSchedule && (
+                            <svg className={`w-3.5 h-3.5 text-slate-400 shrink-0 mt-1 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
                           )}
-                        </div>
-                        {isInSchedule && (
-                          <span className="text-[8px] text-emerald-500 font-semibold shrink-0 mt-1">ADDED</span>
+                        </button>
+                        {/* Section picker */}
+                        {isExpanded && (
+                          <div className="bg-slate-50/80 border-t border-slate-100">
+                            {sections.map((r, si) => {
+                              const secInSchedule = schedule.some((sc) => sc.offering_name === r.offering_name && sc.section_name === r.section_name);
+                              return (
+                                <button
+                                  key={si}
+                                  onClick={() => { if (!secInSchedule) addSection(r); }}
+                                  onMouseEnter={() => { if (r.section_name && hasSisData) handlePreview(r.offering_name, r.section_name); }}
+                                  onMouseLeave={clearPreview}
+                                  className={`w-full text-left pl-7 pr-3 py-1.5 flex items-center gap-2 text-[10px] transition-colors ${secInSchedule ? "opacity-40 cursor-default" : "hover:bg-blue-50 cursor-pointer"}`}
+                                >
+                                  <span className="font-mono font-semibold text-slate-500 w-[36px] shrink-0">§{r.section_name}</span>
+                                  <span className="text-slate-500 truncate flex-1">{r.meetings || "TBA"}</span>
+                                  <span className="text-slate-400 truncate max-w-[120px]">{r.instructors_full_name || "Staff"}</span>
+                                  {secInSchedule && <span className="text-[8px] text-emerald-500 font-semibold shrink-0">ADDED</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
-              )}
+                );
+              })()}
               {searchOpen && searchQuery.length >= 2 && searchResults.length === 0 && !searchLoading && (
                 <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-slate-200 rounded-lg shadow-lg py-3 px-3 text-center text-[11px] text-slate-400">
                   No courses found for &ldquo;{searchQuery}&rdquo;
