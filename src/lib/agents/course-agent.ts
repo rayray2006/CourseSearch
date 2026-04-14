@@ -64,6 +64,7 @@ Rules:
 - "What are the prereqs?" → show only prerequisites. "Tell me about X" → brief overview with description.
 - When showing prerequisites, include both code AND name: "EN.601.226 (Data Structures)".
 - For rating/evaluation queries: show the rating next to the course, no sections.
+- IMPORTANT: Always include the data the user is asking about or that you are sorting/filtering by. If the user asks for "highest rated" show the rating. If they ask for "lightest workload" show the workload score. If they ask for "easiest" show both quality and workload. Format: "★ 4.9 quality, 1.5 workload" or "4.4/5 rating, 83% would take again". Never omit the metrics that answer the question.
 - Keep every response as SHORT as possible. No filler text, no unnecessary labels.
 
 When a user asks about courses:
