@@ -1813,10 +1813,10 @@ export default function Home() {
               </p>
               <div className="space-y-1.5">
                 {[
-                  "What upper-level CS classes fit in my current schedule?",
-                  "Who is the highest rated professor for Intro Algorithms?",
-                  "Compare the workload of Machine Learning vs. Deep Learning",
-                  "Find non-conflicting H/S courses that meet before 2pm",
+                  "What are the highest rated courses at Hopkins with the lowest workload?",
+                  "Who are the best rated CS professors teaching this semester?",
+                  "What's the full prerequisite chain for Natural Language Processing?",
+                  "Find Writing Intensive courses that don't conflict with my schedule",
                 ].map((s) => (
                   <button
                     key={s}
