@@ -460,49 +460,103 @@ export const getCourseHistory = tool({
 
 export const getPrerequisiteChain = tool({
   description:
-    "Recursively resolve the full prerequisite chain for a course. Use for questions like 'what do I need to take before EN.601.443?' Returns the full dependency tree.",
+    "Recursively resolve the full prerequisite chain for a course. Returns the dependency tree with AND/OR structure preserved. Use for questions like 'what do I need to take before EN.601.443?'",
   inputSchema: z.object({
     courseNumber: z.string().describe("Course offering name, e.g. 'EN.601.443'"),
   }),
   execute: async ({ courseNumber }) => {
     const codePattern = /[A-Z]{2}\.\d{3}\.\d{3}/g;
     const visited = new Set<string>();
-    const chain: { code: string; title: string; prerequisites: string; depth: number }[] = [];
+    const titleCache = new Map<string, string>();
+
+    async function lookupCourse(code: string): Promise<{ title: string; prerequisites: string } | null> {
+      const { data: catRow } = await supabase
+        .from("catalogue")
+        .select("title, prerequisites")
+        .eq("offering_name", code)
+        .limit(1)
+        .single();
+      if (catRow) return catRow;
+      const { data: courseRow } = await supabase
+        .from("courses")
+        .select("title, prerequisites")
+        .eq("offering_name", code)
+        .limit(1)
+        .single();
+      return courseRow;
+    }
+
+    async function getTitle(code: string): Promise<string> {
+      if (titleCache.has(code)) return titleCache.get(code)!;
+      const row = await lookupCourse(code);
+      const title = row?.title || "";
+      titleCache.set(code, title);
+      return title;
+    }
+
+    // Parse prerequisite string into structured AND/OR groups
+    function parsePrereqs(prereqStr: string): { type: "and" | "or"; courses: string[] }[] {
+      if (!prereqStr) return [];
+      // Split on top-level AND (handling parenthesized OR groups)
+      const groups: { type: "and" | "or"; courses: string[] }[] = [];
+      // Normalize semicolons and "Students may receive credit for only one of" notes away
+      const cleaned = prereqStr.replace(/;.*/g, "").replace(/Students may.*$/i, "").trim();
+      // Split by AND at the top level
+      const andParts = cleaned.split(/\s+AND\s+/i);
+      for (const part of andParts) {
+        const codes = part.match(codePattern) || [];
+        if (codes.length === 0) continue;
+        const hasOr = /\bOR\b/i.test(part);
+        if (hasOr || (part.includes("(") && codes.length > 1)) {
+          groups.push({ type: "or", courses: [...new Set(codes)] });
+        } else {
+          for (const code of new Set(codes)) {
+            groups.push({ type: "and", courses: [code] });
+          }
+        }
+      }
+      return groups;
+    }
+
+    interface PrereqNode {
+      code: string;
+      title: string;
+      prereqText: string;
+      prereqGroups: { type: "and" | "or"; courses: { code: string; title: string }[] }[];
+      depth: number;
+    }
+
+    const chain: PrereqNode[] = [];
 
     async function resolve(code: string, depth: number) {
       if (visited.has(code) || depth > 5) return;
       visited.add(code);
 
-      // Try catalogue first (has all courses), fall back to courses table
-      const { data: catRow } = await supabase
-        .from("catalogue")
-        .select("offering_name, title, prerequisites")
-        .eq("offering_name", code)
-        .limit(1)
-        .single();
-
-      const row = catRow || (await supabase
-        .from("courses")
-        .select("offering_name, title, prerequisites")
-        .eq("offering_name", code)
-        .limit(1)
-        .single()).data;
-
+      const row = await lookupCourse(code);
       if (!row) return;
+      titleCache.set(code, row.title);
+
+      const groups = parsePrereqs(row.prerequisites || "");
+      // Resolve titles for all codes in groups
+      const resolvedGroups: PrereqNode["prereqGroups"] = [];
+      for (const g of groups) {
+        const courses = await Promise.all(g.courses.map(async (c) => ({ code: c, title: await getTitle(c) })));
+        resolvedGroups.push({ type: g.type, courses });
+      }
 
       chain.push({
-        code: row.offering_name,
+        code,
         title: row.title,
-        prerequisites: row.prerequisites || "",
+        prereqText: row.prerequisites || "",
+        prereqGroups: resolvedGroups,
         depth,
       });
 
-      // Extract prerequisite course codes and recurse
-      const prereqCodes: string[] = row.prerequisites?.match(codePattern) || [];
-      const uniqueCodes = [...new Set(prereqCodes)];
-      for (const prereq of uniqueCodes) {
-        if (!visited.has(prereq)) {
-          await resolve(prereq, depth + 1);
+      // Recurse into required (AND) prereqs, and first of each OR group
+      for (const g of groups) {
+        const toResolve = g.type === "and" ? g.courses : [g.courses[0]];
+        for (const c of toResolve) {
+          await resolve(c, depth + 1);
         }
       }
     }
