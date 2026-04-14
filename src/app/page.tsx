@@ -103,14 +103,14 @@ function md(text: string): string {
     if (subBullet) {
       if (!inList) { inList = true; listLevel = 1; }
       listLevel = 1;
-      out.push(`<div style="padding-left:12px;margin-top:1px">${subBullet[1]}</div>`);
+      out.push(`<div style="padding-left:20px;margin-top:2px;display:flex;gap:6px"><span style="color:#94a3b8;flex-shrink:0">↳</span><span>${subBullet[1]}</span></div>`);
     } else if (topBullet) {
       if (inList) {
-        out.push('<div style="margin-top:10px"></div>');
+        out.push('<div style="margin-top:6px"></div>');
       }
       inList = true;
       listLevel = 0;
-      out.push(`<div>${topBullet[1]}</div>`);
+      out.push(`<div style="margin-top:2px;display:flex;gap:6px"><span style="color:#94a3b8;flex-shrink:0">•</span><span>${topBullet[1]}</span></div>`);
     } else {
       if (inList) { inList = false; listLevel = 0; }
       line = line.replace(/\*(.*?)\*/g, "<em>$1</em>");
