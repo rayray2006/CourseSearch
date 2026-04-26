@@ -2,7 +2,26 @@ import { tool } from "ai";
 import { z } from "zod";
 import { supabase } from "../supabase";
 import { getSessionId, getActiveTerm } from "./schedule-tools";
-import { getPosTags, getVisiblePrograms, getProgramSchema } from "../data";
+import { getPosTags, getVisiblePrograms } from "../data";
+
+interface ProgressCourse {
+  code: string;
+  alternatives?: string[];
+}
+
+interface ProgressSection {
+  type?: string;
+  name: string;
+  status?: string;
+  credits_required?: number;
+  fulfilled?: number;
+  total?: number;
+  areas_covered?: string[];
+  required_areas?: number;
+  courses?: ProgressCourse[];
+  matched_courses?: { code: string }[];
+  subsections?: ProgressSection[];
+}
 
 function getCourseLevel(code: string): number {
   const parts = code.split(".");
@@ -63,7 +82,7 @@ export const checkDegreeProgress = tool({
         if (!res.ok) continue;
         const data = await res.json();
 
-        function summarizeSections(sections: any[]): { name: string; status: string; progress: string; missing?: string }[] {
+        function summarizeSections(sections: ProgressSection[]): { name: string; status: string; progress: string; missing?: string }[] {
           const summaries: ReturnType<typeof summarizeSections> = [];
           for (const s of sections) {
             if (s.type === "reference_only" || s.type === "info_only") continue;
@@ -82,12 +101,12 @@ export const checkDegreeProgress = tool({
             }
 
             if (s.status !== "complete" && s.courses) {
-              const unmatched = s.courses.filter((c: any) => {
+              const unmatched = s.courses.filter((c) => {
                 const mc = s.matched_courses || [];
-                return !mc.some((m: any) => m.code === c.code || c.alternatives?.includes(m.code));
+                return !mc.some((m) => m.code === c.code || c.alternatives?.includes(m.code));
               });
               if (unmatched.length > 0) {
-                missing = `Missing: ${unmatched.slice(0, 3).map((c: any) => c.code).join(", ")}`;
+                missing = `Missing: ${unmatched.slice(0, 3).map((c) => c.code).join(", ")}`;
               }
             }
 
@@ -96,7 +115,7 @@ export const checkDegreeProgress = tool({
             if (s.subsections) {
               for (const sub of s.subsections) {
                 if (sub.type === "reference_only" || sub.type === "info_only") continue;
-                let subProg = sub.credits_required ? `${sub.fulfilled || 0}/${sub.credits_required}cr` : `${sub.fulfilled || 0}/${sub.total || "?"}`;
+                const subProg = sub.credits_required ? `${sub.fulfilled || 0}/${sub.credits_required}cr` : `${sub.fulfilled || 0}/${sub.total || "?"}`;
                 summaries.push({ name: `  ${sub.name}`, status: sub.status || "incomplete", progress: subProg });
               }
             }
@@ -118,7 +137,7 @@ export const checkDegreeProgress = tool({
           sections: sectionSummaries,
           remaining: incomplete.map((s) => `${s.name}: ${s.missing || s.progress}`),
         });
-      } catch (e) {
+      } catch {
         results.push({ program: prog, error: "Could not check progress" });
       }
     }

@@ -1044,6 +1044,7 @@ export default function Home() {
                     <p className="text-[11px] text-slate-400">Click a program above to view its requirements.</p>
                   </div>
                 ) : (() => {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   const detail = programDetails[activeProgram!] as any;
                   if (!detail) return <div className="px-4 py-6 text-[11px] text-slate-400 text-center">Loading requirements...</div>;
 

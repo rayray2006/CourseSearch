@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Dev-only tooling — not in the deployed bundle.
+    "scripts/**",
   ]),
 ]);
 

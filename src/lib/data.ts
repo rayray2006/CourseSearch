@@ -4,17 +4,21 @@
  * In prod (Vercel), uses Supabase since SQLite file isn't available.
  */
 import { supabase } from "./supabase";
+import type DatabaseType from "better-sqlite3";
 
-// Detect if we're in a serverless environment (no SQLite)
-let _db: any = null;
+// Native module (better-sqlite3) loaded lazily so the bundle can run on
+// Vercel where the sqlite binary isn't available — fall back to Supabase.
+let _db: DatabaseType.Database | null = null;
 let _hasDb = true;
 
-function getDb() {
+function getDb(): DatabaseType.Database | null {
   if (!_hasDb) return null;
   if (_db) return _db;
   try {
-    const Database = require("better-sqlite3");
-    const path = require("path");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require("better-sqlite3") as typeof DatabaseType;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("path") as typeof import("path");
     _db = new Database(path.join(process.cwd(), "courses.db"));
     _db.pragma("journal_mode = WAL");
     return _db;

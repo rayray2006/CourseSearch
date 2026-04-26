@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
 
   // For past terms: search across ALL terms, deduplicate by offering_name, show one result per course
   if (mode === "past") {
-    let query = supabase
+    const query = supabase
       .from("courses")
       .select("offering_name, section_name, title, credits, meetings, instructors_full_name, department, term")
       .ilike(col, `%${q}%`)
