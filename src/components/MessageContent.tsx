@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 interface Props {
   html: string;
   onAdd: (code: string, section: string) => void;
@@ -7,9 +9,77 @@ interface Props {
   onPreviewEnd: () => void;
   validCourses: Set<string>;
   courseSections: { code: string; section: string }[];
+  /**
+   * "sm" (default, desktop): tiny pill, brief ✓ confirm.
+   * "lg" (mobile): larger touch target, expands to "Added" — needed because
+   * the schedule isn't visible while reading chat.
+   */
+  size?: "sm" | "lg";
 }
 
-export function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCourses, courseSections }: Props) {
+function AddButton({
+  code,
+  section,
+  onAdd,
+  onPreview,
+  onPreviewEnd,
+  size,
+}: {
+  code: string;
+  section: string;
+  onAdd: (code: string, section: string) => void;
+  onPreview: (code: string, section: string) => void;
+  onPreviewEnd: () => void;
+  size: "sm" | "lg";
+}) {
+  const [added, setAdded] = useState(false);
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onAdd(code, section);
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1500);
+  };
+
+  if (size === "lg") {
+    return (
+      <button
+        onClick={handleClick}
+        onTouchStart={() => onPreview(code, section)}
+        onMouseEnter={() => onPreview(code, section)}
+        onMouseLeave={onPreviewEnd}
+        className={`inline-flex items-center justify-center h-6 px-2 rounded-full text-[11px] font-semibold leading-none align-middle ml-1 transition-all ${
+          added
+            ? "bg-emerald-500 text-white"
+            : "bg-emerald-100 text-emerald-700 active:bg-emerald-200"
+        }`}
+        title={`Add ${code} section ${section}`}
+      >
+        {added ? "Added" : (
+          <span className="text-[14px] leading-none">+</span>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      onMouseEnter={() => onPreview(code, section)}
+      onMouseLeave={onPreviewEnd}
+      className={`inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-[9px] font-bold leading-none transition-colors flex-shrink-0 align-middle ml-0.5 ${
+        added
+          ? "bg-emerald-500 text-white"
+          : "bg-emerald-100 text-emerald-600 hover:bg-emerald-200"
+      }`}
+      title={`Add ${code} section ${section}`}
+    >
+      {added ? "✓" : "+"}
+    </button>
+  );
+}
+
+export function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCourses, courseSections, size = "sm" }: Props) {
   const TOKEN_RE = /([A-Z]{2}\.\d{3}\.\d{3})|Section\s+(\d{2})/g;
   const parts: { type: "html" | "code" | "section"; text: string; value?: string }[] = [];
   let lastIdx = 0;
@@ -56,14 +126,16 @@ export function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCour
     }
   }
 
-  const addBtn = (code: string, section: string) => (
-    <button
-      onClick={(e) => { e.stopPropagation(); onAdd(code, section); }}
-      onMouseEnter={() => onPreview(code, section)}
-      onMouseLeave={onPreviewEnd}
-      className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100 text-emerald-600 hover:bg-emerald-200 text-[9px] font-bold leading-none transition-colors flex-shrink-0 align-middle ml-0.5"
-      title={`Add ${code} section ${section}`}
-    >+</button>
+  const renderAdd = (code: string, section: string, key: string) => (
+    <AddButton
+      key={key}
+      code={code}
+      section={section}
+      onAdd={onAdd}
+      onPreview={onPreview}
+      onPreviewEnd={onPreviewEnd}
+      size={size}
+    />
   );
 
   const codeOccurrence = new Map<string, number>();
@@ -85,7 +157,7 @@ export function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCour
           const resolvedSection = matchingSections[occ]?.section || codeFirstSection.get(i) || "01";
 
           if (sectionCount <= 1 && isValid) {
-            return <strong key={i}>{p.text}{addBtn(code, resolvedSection)}</strong>;
+            return <strong key={i}>{p.text}{renderAdd(code, resolvedSection, `add-${i}`)}</strong>;
           }
           return <strong key={i}>{p.text}</strong>;
         }
@@ -96,7 +168,7 @@ export function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCour
           const prevText = prevPart?.text || "";
           const isListContext = !prevText || prevText.endsWith("\n") || /[*\-•]\s*$/.test(prevText) || /:\s*$/.test(prevText) || prevPart?.type === "code";
           if (!isListContext) return <span key={i}>{p.text}</span>;
-          return <span key={i}>{p.text}{addBtn(courseCode, p.value!)}</span>;
+          return <span key={i}>{p.text}{renderAdd(courseCode, p.value!, `add-${i}`)}</span>;
         }
         return <span key={i}>{p.text}</span>;
       })}

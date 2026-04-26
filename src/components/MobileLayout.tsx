@@ -668,6 +668,7 @@ function ChatTab(props: MobileLayoutProps) {
                           html={md(part.text)}
                           validCourses={validCourses}
                           courseSections={courseSections}
+                          size="lg"
                           onAdd={async (code, section) => {
                             await fetch("/api/schedule", {
                               method: "POST",
