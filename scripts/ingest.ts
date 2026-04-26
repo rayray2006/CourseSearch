@@ -159,8 +159,41 @@ async function main() {
     console.log(`  Total for ${term}: ${termTotal} sections`);
   }
 
-  // Re-apply historical evaluation averages to freshly ingested terms
-  console.log("\nApplying historical evaluation data...");
+  // Re-aggregate eval ratings from the evaluations table back into freshly
+  // inserted course rows. INSERT OR REPLACE above clears these columns; if
+  // every term is rescraped at once, the cross-term recovery below has nothing
+  // to copy from. The evaluations table is the source of truth.
+  console.log("\nRe-aggregating evaluations into courses...");
+  const aggResult = db.prepare(`
+    UPDATE courses
+    SET overall_quality = agg.avg_oq,
+        instructor_effectiveness = agg.avg_ie,
+        intellectual_challenge = agg.avg_ic,
+        workload = agg.avg_wl,
+        feedback_usefulness = agg.avg_fu,
+        num_evaluations = agg.cnt,
+        num_respondents = agg.total_resp
+    FROM (
+      SELECT course_code,
+        ROUND(AVG(overall_quality), 2) as avg_oq,
+        ROUND(AVG(instructor_effectiveness), 2) as avg_ie,
+        ROUND(AVG(intellectual_challenge), 2) as avg_ic,
+        ROUND(AVG(workload), 2) as avg_wl,
+        ROUND(AVG(feedback_usefulness), 2) as avg_fu,
+        COUNT(*) as cnt,
+        SUM(num_respondents) as total_resp
+      FROM evaluations
+      WHERE overall_quality IS NOT NULL
+      GROUP BY course_code
+    ) agg
+    WHERE courses.offering_name = agg.course_code
+      AND courses.term IN (${terms.map(() => "?").join(",")})
+  `).run(...terms);
+  console.log(`  Aggregated evals into ${aggResult.changes} courses.`);
+
+  // Cross-term fallback: for offerings without evaluations table data, copy
+  // averages from other terms that still have ratings.
+  console.log("Applying cross-term evaluation fallback...");
   const applyEvals = db.prepare(`
     UPDATE courses
     SET
