@@ -792,8 +792,6 @@ export default function Home() {
     return (
       <MobileLayout
         activeTerm={activeTerm}
-        setActiveTerm={setActiveTermState}
-        availableTerms={filteredTerms}
         schedule={schedule}
         scheduleLoaded={scheduleLoaded}
         totalCredits={totalCredits}
@@ -804,14 +802,6 @@ export default function Home() {
         setSearchQuery={setSearchQuery}
         searchResults={searchResults}
         searchLoading={searchLoading}
-        programs={programs}
-        loadPrograms={loadPrograms}
-        selectedPrograms={selectedPrograms}
-        setSelectedPrograms={setSelectedPrograms}
-        activeProgram={activeProgram}
-        setActiveProgram={setActiveProgram}
-        loadProgramDetail={loadProgramDetail}
-        programDetails={programDetails}
         messages={messages}
         sendMessage={sendMessage}
         setMessages={setMessages}

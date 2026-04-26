@@ -13,15 +13,7 @@ import {
 } from "@/lib/schedule-utils";
 import { MessageContent } from "./MessageContent";
 
-type Tab = "schedule" | "programs" | "chat";
-
-interface TermInfo {
-  term: string;
-  sort_order: number;
-  has_sis_data: boolean;
-  course_count: number;
-  is_current: boolean;
-}
+type Tab = "schedule" | "chat";
 
 interface SearchResult {
   offering_name: string;
@@ -33,35 +25,9 @@ interface SearchResult {
   department?: string;
 }
 
-interface ProgramInfo {
-  program_name: string;
-  school: string;
-  department: string;
-  req_count: number;
-  course_count: number;
-}
-
-interface ProgramSection {
-  name?: string;
-  status?: string;
-  credits_required?: number;
-  fulfilled?: number;
-  total?: number;
-}
-
-interface ProgramDetail {
-  sections?: ProgramSection[];
-  url?: string | null;
-  overallStatus?: string;
-  scheduledCount?: number;
-  totalScheduledCredits?: number;
-}
-
 interface MobileLayoutProps {
-  // Term
+  // Term (display only — desktop's term selector is currently inert too)
   activeTerm: string;
-  setActiveTerm: (term: string) => void;
-  availableTerms: TermInfo[];
 
   // Schedule
   schedule: ScheduledCourse[];
@@ -76,16 +42,6 @@ interface MobileLayoutProps {
   setSearchQuery: (q: string) => void;
   searchResults: SearchResult[];
   searchLoading: boolean;
-
-  // Programs
-  programs: ProgramInfo[];
-  loadPrograms: () => Promise<void>;
-  selectedPrograms: string[];
-  setSelectedPrograms: (s: string[] | ((prev: string[]) => string[])) => void;
-  activeProgram: string | null;
-  setActiveProgram: (p: string | null) => void;
-  loadProgramDetail: (name: string, force?: boolean) => Promise<void>;
-  programDetails: Record<string, ProgramDetail>;
 
   // Chat
   messages: CourseAgentUIMessage[];
@@ -113,15 +69,10 @@ export function MobileLayout(props: MobileLayoutProps) {
 
   return (
     <div className="flex flex-col h-screen [height:100dvh] bg-white text-slate-900 overflow-hidden">
-      <MobileHeader
-        activeTerm={props.activeTerm}
-        setActiveTerm={props.setActiveTerm}
-        availableTerms={props.availableTerms}
-      />
+      <MobileHeader activeTerm={props.activeTerm} />
 
       <main className="flex-1 min-h-0 overflow-hidden">
         {tab === "schedule" && <ScheduleTab {...props} />}
-        {tab === "programs" && <ProgramsTab {...props} />}
         {tab === "chat" && <ChatTab {...props} />}
       </main>
 
@@ -131,56 +82,14 @@ export function MobileLayout(props: MobileLayoutProps) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Header (term + title)
+// Header
 // ─────────────────────────────────────────────────────────────────────────
 
-function MobileHeader({
-  activeTerm,
-  setActiveTerm,
-  availableTerms,
-}: {
-  activeTerm: string;
-  setActiveTerm: (t: string) => void;
-  availableTerms: TermInfo[];
-}) {
-  const [open, setOpen] = useState(false);
-
+function MobileHeader({ activeTerm }: { activeTerm: string }) {
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between px-4 h-12 border-b border-slate-200 bg-white/85 backdrop-blur-md safe-pt">
+    <header className="shrink-0 flex items-center justify-between px-4 h-12 border-b border-slate-200 bg-white safe-pt">
       <h1 className="text-[15px] font-semibold tracking-tight text-slate-900">JHU Planner</h1>
-      <div className="relative">
-        <button
-          onClick={() => setOpen((o) => !o)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 text-[12px] font-medium text-slate-700 active:bg-slate-200"
-        >
-          {activeTerm}
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-        {open && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-            <div className="absolute right-0 top-full mt-1.5 w-44 max-h-72 overflow-auto bg-white rounded-xl shadow-lg border border-slate-200 z-50 py-1">
-              {availableTerms.map((t) => (
-                <button
-                  key={t.term}
-                  onClick={() => {
-                    setActiveTerm(t.term);
-                    setOpen(false);
-                  }}
-                  className={`block w-full text-left px-3 py-2 text-[13px] ${
-                    t.term === activeTerm ? "bg-blue-50 text-blue-700 font-medium" : "text-slate-700 active:bg-slate-50"
-                  }`}
-                >
-                  {t.term}
-                  {t.is_current && <span className="ml-2 text-[10px] text-emerald-600 font-medium">CURRENT</span>}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+      <span className="text-[12px] font-medium text-slate-500">{activeTerm}</span>
     </header>
   );
 }
@@ -204,16 +113,6 @@ function BottomTabs({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
       ),
     },
     {
-      id: "programs",
-      label: "Programs",
-      icon: (
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
-          <path d="M6 12v5c3 3 9 3 12 0v-5" />
-        </svg>
-      ),
-    },
-    {
       id: "chat",
       label: "Assistant",
       icon: (
@@ -225,7 +124,7 @@ function BottomTabs({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
   ];
 
   return (
-    <nav className="shrink-0 grid grid-cols-3 border-t border-slate-200 bg-white/95 backdrop-blur-md safe-pb">
+    <nav className="shrink-0 grid grid-cols-2 border-t border-slate-200 bg-white/95 backdrop-blur-md safe-pb">
       {items.map((it) => {
         const active = tab === it.id;
         return (
@@ -656,266 +555,6 @@ function SearchSheet({
           ))}
         </ul>
       </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// PROGRAMS TAB
-// ─────────────────────────────────────────────────────────────────────────
-
-function ProgramsTab(props: MobileLayoutProps) {
-  const {
-    programs,
-    loadPrograms,
-    selectedPrograms,
-    setSelectedPrograms,
-    activeProgram,
-    setActiveProgram,
-    loadProgramDetail,
-  } = props;
-  const [pickerOpen, setPickerOpen] = useState(false);
-
-  useEffect(() => {
-    if (programs.length === 0) loadPrograms();
-  }, [programs.length, loadPrograms]);
-
-  const toggleProgram = (name: string) => {
-    setSelectedPrograms((prev) => {
-      if (prev.includes(name)) return prev.filter((p) => p !== name);
-      return [...prev, name];
-    });
-    if (!selectedPrograms.includes(name)) {
-      loadProgramDetail(name);
-      setActiveProgram(name);
-    }
-  };
-
-  return (
-    <div className="h-full flex flex-col">
-      {/* Selected programs as pills */}
-      <div className="shrink-0 px-4 py-2.5 border-b border-slate-100">
-        {selectedPrograms.length === 0 ? (
-          <button
-            onClick={() => setPickerOpen(true)}
-            className="w-full px-4 py-3 rounded-xl border-2 border-dashed border-slate-200 text-[13px] text-slate-500 active:bg-slate-50"
-          >
-            + Add a program to track
-          </button>
-        ) : (
-          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
-            {selectedPrograms.map((name) => {
-              const active = activeProgram === name;
-              return (
-                <button
-                  key={name}
-                  onClick={() => setActiveProgram(name)}
-                  className={`shrink-0 px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors ${
-                    active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 active:bg-slate-200"
-                  }`}
-                >
-                  {name.length > 30 ? name.slice(0, 30) + "…" : name}
-                </button>
-              );
-            })}
-            <button
-              onClick={() => setPickerOpen(true)}
-              className="shrink-0 px-3 py-1.5 rounded-full bg-blue-50 text-blue-600 text-[12px] font-medium active:bg-blue-100"
-            >
-              + Add
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Active program detail */}
-      <div className="flex-1 overflow-y-auto">
-        {activeProgram ? (
-          <ProgramDetailView
-            programName={activeProgram}
-            programDetails={props.programDetails}
-          />
-        ) : (
-          <div className="px-6 py-12 text-center text-[12px] text-slate-400">
-            Select a program above to view its requirements.
-          </div>
-        )}
-      </div>
-
-      {pickerOpen && (
-        <ProgramPicker
-          programs={programs}
-          selectedPrograms={selectedPrograms}
-          onToggle={toggleProgram}
-          onClose={() => setPickerOpen(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-function ProgramDetailView({
-  programName,
-  programDetails,
-}: {
-  programName: string;
-  programDetails: Record<string, ProgramDetail>;
-}) {
-  const detail = programDetails[programName];
-  if (!detail) {
-    return <div className="px-6 py-12 text-center text-[12px] text-slate-400">Loading requirements…</div>;
-  }
-  const sections = detail.sections || [];
-  if (sections.length === 0) {
-    return (
-      <div className="px-6 py-12 text-center text-[12px] text-slate-400">
-        No structured requirements available for this program.
-        {detail.url && (
-          <div className="mt-3">
-            <a href={detail.url} target="_blank" rel="noopener noreferrer" className="text-blue-600">
-              View e-catalogue ↗
-            </a>
-          </div>
-        )}
-      </div>
-    );
-  }
-  return (
-    <div className="px-4 py-4 space-y-2">
-      {detail.totalScheduledCredits !== undefined && (
-        <div className="px-1 pb-2 text-[11px] text-slate-500">
-          <span className="font-semibold text-slate-700">{detail.totalScheduledCredits}</span> credits scheduled
-          {detail.scheduledCount !== undefined && (
-            <>
-              <span className="mx-1.5 text-slate-300">·</span>
-              <span className="font-semibold text-slate-700">{detail.scheduledCount}</span> courses
-            </>
-          )}
-        </div>
-      )}
-      {sections.map((s: { name?: string; status?: string; credits_required?: number; fulfilled?: number; total?: number }, i: number) => (
-        <div key={i} className="rounded-xl border border-slate-200 px-3.5 py-3 bg-white">
-          <div className="flex items-start justify-between gap-2">
-            <div className="text-[13px] font-medium text-slate-800 flex-1">{s.name}</div>
-            <SectionBadge status={s.status} />
-          </div>
-          <ProgressLine section={s} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SectionBadge({ status }: { status?: string }) {
-  if (status === "complete") {
-    return (
-      <span className="shrink-0 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-semibold">
-        ✓ Done
-      </span>
-    );
-  }
-  if (status === "in_progress") {
-    return (
-      <span className="shrink-0 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-semibold">
-        In progress
-      </span>
-    );
-  }
-  return (
-    <span className="shrink-0 px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-semibold">
-      Todo
-    </span>
-  );
-}
-
-function ProgressLine({ section }: { section: { credits_required?: number; fulfilled?: number; total?: number } }) {
-  if (section.credits_required) {
-    const have = section.fulfilled || 0;
-    const need = section.credits_required;
-    const pct = Math.min(100, (have / need) * 100);
-    return (
-      <div className="mt-2">
-        <div className="flex justify-between text-[10px] text-slate-500 mb-1">
-          <span>{have} / {need} credits</span>
-          {have < need && <span>need {need - have} more</span>}
-        </div>
-        <div className="h-1 rounded-full bg-slate-100 overflow-hidden">
-          <div className="h-full bg-blue-500" style={{ width: `${pct}%` }} />
-        </div>
-      </div>
-    );
-  }
-  if (section.total) {
-    const have = section.fulfilled || 0;
-    return (
-      <div className="mt-1.5 text-[10px] text-slate-500">
-        {have} / {section.total} requirements
-      </div>
-    );
-  }
-  return null;
-}
-
-function ProgramPicker({
-  programs,
-  selectedPrograms,
-  onToggle,
-  onClose,
-}: {
-  programs: ProgramInfo[];
-  selectedPrograms: string[];
-  onToggle: (name: string) => void;
-  onClose: () => void;
-}) {
-  const [q, setQ] = useState("");
-  const filtered = q
-    ? programs.filter((p) => p.program_name.toLowerCase().includes(q.toLowerCase()))
-    : programs;
-
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-white">
-      <header className="shrink-0 flex items-center gap-2 px-3 h-14 border-b border-slate-200 safe-pt">
-        <button onClick={onClose} className="p-2 -ml-1 text-slate-500 active:text-slate-700">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="19" y1="12" x2="5" y2="12" />
-            <polyline points="12 19 5 12 12 5" />
-          </svg>
-        </button>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search programs"
-          className="flex-1 px-3 py-2 rounded-lg bg-slate-100 text-[14px] focus:outline-none focus:ring-2 focus:ring-blue-300"
-        />
-      </header>
-      <ul className="flex-1 overflow-y-auto divide-y divide-slate-100">
-        {filtered.map((p) => {
-          const selected = selectedPrograms.includes(p.program_name);
-          return (
-            <li key={p.program_name}>
-              <button
-                onClick={() => onToggle(p.program_name)}
-                className="w-full text-left px-4 py-3 active:bg-slate-50 flex items-center gap-3"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-medium text-slate-900">{p.program_name}</div>
-                  <div className="text-[11px] text-slate-500">{p.school}</div>
-                </div>
-                {selected ? (
-                  <span className="shrink-0 w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[12px]">
-                    ✓
-                  </span>
-                ) : (
-                  <span className="shrink-0 w-6 h-6 rounded-full border-2 border-slate-200" />
-                )}
-              </button>
-            </li>
-          );
-        })}
-        {filtered.length === 0 && (
-          <li className="px-6 py-12 text-center text-[12px] text-slate-400">No programs found.</li>
-        )}
-      </ul>
     </div>
   );
 }
