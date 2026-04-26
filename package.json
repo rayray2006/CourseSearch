@@ -16,10 +16,12 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.61",
+    "@ai-sdk/google-vertex": "^4.0.109",
     "@ai-sdk/openai": "^3.0.52",
     "@ai-sdk/react": "^3.0.160",
     "@mtucourses/rate-my-professors": "^2.2.1",
     "@supabase/supabase-js": "^2.103.0",
+    "@vercel/analytics": "^2.0.1",
     "ai": "^6.0.158",
     "better-sqlite3": "^12.8.0",
     "cheerio": "^1.2.0",

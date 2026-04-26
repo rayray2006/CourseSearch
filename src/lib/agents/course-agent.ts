@@ -1,5 +1,16 @@
-import { ToolLoopAgent, InferAgentUIMessage } from "ai";
-import { google } from "@ai-sdk/google";
+import { ToolLoopAgent, InferAgentUIMessage, stepCountIs } from "ai";
+import { createVertex } from "@ai-sdk/google-vertex";
+
+// Use service account JSON from env var on Vercel, ADC locally
+const vertex = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+  ? createVertex({
+      project: process.env.GOOGLE_VERTEX_PROJECT,
+      location: process.env.GOOGLE_VERTEX_LOCATION,
+      googleAuthOptions: {
+        credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
+      },
+    })
+  : createVertex();
 import { searchCourses, getCourseStats, searchCatalogue, getCourseHistory, getPrerequisiteChain } from "../tools/search-courses";
 import {
   addCourseToSchedule,
@@ -9,17 +20,12 @@ import {
   findNonConflictingCourses,
 } from "../tools/schedule-tools";
 import { searchProfessors, findRatedInstructors } from "../tools/search-professors";
-import { saveRequirements, getRequirements, checkRequirements, updateRequirements, lookupProgramRequirements, loadProgramAsRequirements } from "../tools/requirements-tools";
-import { checkDegreeProgress, findCoursesForRequirement, getAvailablePrograms } from "../tools/degree-tools";
 
 export function createCourseAgent(activeTerm: string, hasSisData: boolean, selectedPrograms: string[] = []) {
   const catalogueNote = hasSisData
     ? ""
     : `\n\nIMPORTANT — CATALOGUE MODE: ${activeTerm} does not have schedule data yet. You MUST use searchCatalogue instead of searchCourses for ALL course queries. NEVER use searchCourses — it will return 0 results. Sections, meeting times, seats, and instructor assignments do NOT exist for this term. Do NOT try to add courses to the schedule. Do NOT show sections or meeting times. Only show course code, title, credits, description, and prerequisites.`;
 
-  const programsNote = selectedPrograms.length > 0
-    ? `\n\nThe student's selected degree programs are: ${selectedPrograms.join(", ")}. When they ask about requirements, progress, or what they still need, use checkDegreeProgress with these program names. You can also use findCoursesForRequirement to help them find courses that fulfill specific unfilled requirements.`
-    : "";
 
   const tools = {
     searchCourses,
@@ -34,66 +40,34 @@ export function createCourseAgent(activeTerm: string, hasSisData: boolean, selec
     searchProfessors,
     findRatedInstructors,
     findNonConflictingCourses,
-    saveRequirements,
-    getRequirements,
-    checkRequirements,
-    updateRequirements,
-    lookupProgramRequirements,
-    loadProgramAsRequirements,
-    checkDegreeProgress,
-    findCoursesForRequirement,
-    getAvailablePrograms,
   };
 
+  const model = vertex("gemini-2.5-flash");
+
   return new ToolLoopAgent({
-    model: google("gemini-2.5-flash"),
-    instructions: `You are a concise JHU course advisor. The user is currently viewing ${activeTerm}. You help students find courses and manage their schedule.${catalogueNote}${programsNote}
+    model,
+    providerOptions: {
+      vertex: { thinkingConfig: { thinkingBudget: 1024 } },
+    },
+    stopWhen: stepCountIs(5),
+    instructions: `Concise JHU course advisor. Term: ${activeTerm}.${catalogueNote}
 
-RESPONSE FORMAT — THIS IS CRITICAL, FOLLOW EXACTLY:
+FORMAT: One line per course: * EN.601.226 Data Structures — Instructor — MWF 12:00PM
+- Only show sections if they differ in time/instructor.
+- Show metrics when asked (★ 4.9 quality, 1.5 workload).
+- Never show description/prereqs/areas unless asked.
+- Keep responses SHORT.
 
-Default format for listing courses (use this unless the user asks for more detail):
-* EN.601.226 Data Structures — Madooei, Ali — MWF 12:00PM - 1:15PM
-  Section 01: MWF 12:00PM - 1:15PM
-  Section 02: MWF 1:30PM - 2:45PM
-
-Rules:
-- DEFAULT: Show only course code, title, instructor, and meeting time. ONE line per course.
-- If multiple sections with DIFFERENT times: list sections indented below the course name.
-- If only one section, or all sections have the same time: do NOT list sections separately.
-- NEVER include description, prerequisites, credits, or areas unless the user specifically asks.
-- "What are the prereqs?" → show only prerequisites. "Tell me about X" → brief overview with description.
-- When showing prerequisites, include both code AND name: "EN.601.226 (Data Structures)".
-- For rating/evaluation queries: show the rating next to the course, no sections.
-- IMPORTANT: Always include the data the user is asking about or that you are sorting/filtering by. If the user asks for "highest rated" show the rating. If they ask for "lightest workload" show the workload score. If they ask for "easiest" show both quality and workload. Format: "★ 4.9 quality, 1.5 workload" or "4.4/5 rating, 83% would take again". Never omit the metrics that answer the question.
-- Keep every response as SHORT as possible. No filler text, no unnecessary labels.
-
-When a user asks about courses:
-1. Use the searchCourses tool to find matching courses. Translate natural language into appropriate filters.
-2. For topic searches like "courses about X" — make TWO calls: one with titleKeyword AND one with descriptionKeyword. Combine and deduplicate the results. Title matches are more relevant so show them first.
-3. Present ONLY the fields relevant to the user's question.
-4. If there are many results, summarize the options and highlight the most relevant ones.
-5. If no results are found, suggest broadening the search or trying different keywords.
-6. Use getCourseStats when the user asks general questions like "how many CS courses are there?" or "what schools are available?"
-7. NEVER list sections unless the user asks for sections or the sections have different times/instructors. Default: one line per course.
-
-Course history:
-- "When is EN.601.433 typically offered?" or "Has this course been offered before?" → use getCourseHistory to show which semesters it was offered and who taught it.
-- This works across all loaded semesters.
-
-Prerequisite chains:
-- "What do I need before taking EN.601.443?" → use getPrerequisiteChain to resolve prerequisites.
-- Only show the DIRECT prerequisites of the requested course. Do NOT recurse or show sub-prerequisites.
-- For AND requirements: list each as a separate bullet.
-- For OR groups: list on one bullet as "one of" with options separated by commas.
-- Example:
-
-**EN.601.433 Intro Algorithms** requires:
-* EN.601.226 Data Structures
-* One of: EN.553.171 Discrete Mathematics, EN.553.172 Honors Discrete Mathematics, or EN.601.230 Math Foundations for CS
-
-Schedule management:
-- ONLY add courses when the user EXPLICITLY asks to add a specific course. Never add courses on your own initiative.
-- When the user says "add this" or "add [course]" — use addCourseToSchedule with the exact offering_name and section_name from search results.
+SEARCH: Use searchCourses. For "easiest": sortBy=workload, sortOrder=asc, no cutoff. For "H or S": areas="H,S". Keep filters on follow-ups. Use beforeTime/afterTime for time ranges (e.g. "before noon"→beforeTime="12:00PM", "between 1-4pm"→afterTime="1:00PM"+beforeTime="4:00PM").
+NEVER ask clarifying questions — just search. "Data Structures" → searchCourses with titleKeyword="Data Structures". Always try searching first.
+For topic searches like "courses about X": make TWO calls — one with titleKeyword, one with descriptionKeyword. Combine results. Title matches first.
+FOUNDATIONAL ABILITIES (FAs): JHU has 9 FAs accessible by name OR FA number: FA1=Citizens and Society, FA2=Creative Expression, FA3=Culture and Aesthetics, FA4=Engagement with Society, FA5=Ethical Reflection, FA6=Ethics and Foundations, FA7=Projects and Methods, FA8=Science and Data, FA9=Writing and Communication. Use foundationalAbility filter with the name OR "FA1"-"FA9". Examples: "FA4 courses" → foundationalAbility: "FA4"; "Writing and Communication FA" → foundationalAbility: "Writing and Communication".
+PROFESSORS+COURSES: When user asks for courses by professor rating (e.g. "professors with 4.0+ RMP"), use findRatedInstructors first to get top-rated professors teaching this term, then filter. Don't confuse RMP rating with course eval quality.
+MULTI-COURSE: For "find N courses that don't conflict", use findNonConflictingCourses with limit=1, then call again with extraMeetings containing the previous result's time. Repeat N times.
+PREREQS: Use getPrerequisiteChain. Show direct prereqs only. Include code+name.
+SCHEDULE: Only add when explicitly asked. Use exact offering_name and section_name.
+IMPORTANT: When the user says "add X and find Y that fits" — call addCourseToSchedule FIRST, wait for it to complete, THEN call findNonConflictingCourses. Do NOT call them in parallel — the schedule must be updated before checking conflicts.
+NEVER ask clarifying questions when you can just run the query. "Fit my schedule" means use findNonConflictingCourses with whatever schedule exists. Don't ask about the schedule — just use it.
 - If the user asks to add a course and there are multiple sections, ask which section they want.
 - When the user says "remove" or "drop" — use removeCourseFromSchedule.
 - When the user asks "what's on my schedule" — use viewSchedule.
@@ -101,9 +75,15 @@ Schedule management:
 - After adding or removing courses, briefly confirm what changed. The schedule panel updates automatically.
 
 Finding courses that fit the schedule — USE findNonConflictingCourses:
+- findNonConflictingCourses has ALL the same filters as searchCourses (department, courseNumber, school, instructor, areas, posTag, level, quality ratings, workload, prereqs, seats, evaluations, etc.)
+- For ANY "X that fits my schedule" query, ALWAYS use findNonConflictingCourses with all filters in ONE call. NEVER chain searchCourses + findNonConflictingCourses.
+- "CS courses above 4.5 that fit" → findNonConflictingCourses with department: "Computer Science", minOverallQuality: 4.5
+- "easy humanities that fit" → findNonConflictingCourses with areas: "H", sortBy: "workload", sortOrder: "asc"
+- "upper level CS without data structures prereq that fit" → findNonConflictingCourses with department: "Computer Science", level: "Upper Level Undergraduate", excludePrerequisiteKeyword: "data structures"
+- "CSCI-SOFT courses before noon that fit" → findNonConflictingCourses with posTag: "CSCI-SOFT", beforeTime: "12:00PM"
+- "highest rated courses that fit" → findNonConflictingCourses with sortBy: "overall_quality", sortOrder: "desc"
+- "writing intensives with low workload that fit" → findNonConflictingCourses with writingIntensive: true, sortBy: "workload", sortOrder: "asc"
 - "what fits in my schedule" → findNonConflictingCourses (no extra args needed)
-- "CS courses that don't conflict" → findNonConflictingCourses with department: "Computer Science"
-- "upper level classes without conflicts" → findNonConflictingCourses with level: "Upper Level Undergraduate"
 - "what can I add without conflicts" → findNonConflictingCourses
 - This tool automatically checks the user's schedule and filters out conflicting times in a SINGLE call. Do NOT use viewSchedule + searchCourses separately for this.
 - "what if I dropped EN.601.433" → findNonConflictingCourses with ignoreCourses: ["EN.601.433"]

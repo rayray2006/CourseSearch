@@ -6,6 +6,7 @@ import { isToolUIPart } from "ai";
 import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from "react";
 import type { CourseAgentUIMessage } from "@/lib/agents/course-agent";
 
+
 interface ScheduledCourse {
   offering_name: string;
   section_name: string;
@@ -228,6 +229,12 @@ function MessageContent({ html, onAdd, onPreview, onPreviewEnd, validCourses, co
         if (p.type === "section") {
           const courseCode = sectionCourseMap.get(i) || "";
           if (!courseCode || !validCourses.has(courseCode)) return <span key={i}>{p.text}</span>;
+          // Only show + button if the section appears in a list context (preceded by newline, bullet, or start of text)
+          // not inline in prose like "has 1 open seat in Section 01"
+          const prevPart = i > 0 ? parts[i - 1] : null;
+          const prevText = prevPart?.text || "";
+          const isListContext = !prevText || prevText.endsWith("\n") || /[*\-•]\s*$/.test(prevText) || /:\s*$/.test(prevText) || prevPart?.type === "code";
+          if (!isListContext) return <span key={i}>{p.text}</span>;
           return <span key={i}>{p.text}{addBtn(courseCode, p.value!)}</span>;
         }
         return <span key={i}>{p.text}</span>;
@@ -271,10 +278,14 @@ interface TermInfo {
 export default function Home() {
   const [activeTerm, setActiveTermState] = useState("Fall 2026");
   const [availableTerms, setAvailableTerms] = useState<TermInfo[]>([]);
+  const termsLoaded = availableTerms.length > 0;
   const hasSisData = availableTerms.find((t) => t.term === activeTerm)?.has_sis_data ?? true;
-  const isCurrentTerm = availableTerms.find((t) => t.term === activeTerm)?.is_current ?? false;
-  const isPastTerm = hasSisData && !isCurrentTerm;
-  const showCalendar = isCurrentTerm; // only current term gets the calendar grid
+  // Default isCurrentTerm to true for the default term before terms load, to avoid layout flash
+  const isCurrentTerm = termsLoaded
+    ? (availableTerms.find((t) => t.term === activeTerm)?.is_current ?? false)
+    : true;
+  const isPastTerm = termsLoaded && hasSisData && !isCurrentTerm;
+  const showCalendar = isCurrentTerm;
 
   // Enrollment period — filters which terms show in dropdown (persisted)
   const [enrollStart, setEnrollStart] = useState(() => {
@@ -325,6 +336,7 @@ export default function Home() {
     return [];
   });
 
+
   const chatTransport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -347,8 +359,11 @@ export default function Home() {
   }, [status, messages]);
   const [input, setInput] = useState("");
   const [schedule, setSchedule] = useState<ScheduledCourse[]>([]);
+  const [scheduleLoaded, setScheduleLoaded] = useState(false);
   const [selected, setSelected] = useState<ScheduledCourse | null>(null);
   const [previewCourse, setPreviewCourse] = useState<ScheduledCourse | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackText, setFeedbackText] = useState("");
 
   // --- Direct search bar state ---
   const [searchQuery, setSearchQuery] = useState("");
@@ -573,8 +588,10 @@ export default function Home() {
 
   // Cache fetched course data for preview hover
   const previewCache = useRef(new Map<string, ScheduledCourse | null>());
+  const previewActiveKey = useRef<string | null>(null);
   const handlePreview = useCallback(async (code: string, section: string) => {
     const key = `${code}::${section}`;
+    previewActiveKey.current = key;
     if (previewCache.current.has(key)) {
       setPreviewCourse(previewCache.current.get(key) || null);
       return;
@@ -585,13 +602,19 @@ export default function Home() {
       const data = await res.json();
       if (data?.offering_name) {
         previewCache.current.set(key, data);
-        setPreviewCourse(data);
+        // Only set if this preview is still active (user hasn't moved away)
+        if (previewActiveKey.current === key) {
+          setPreviewCourse(data);
+        }
       }
     } catch {
-      setPreviewCourse(null);
+      if (previewActiveKey.current === key) setPreviewCourse(null);
     }
   }, []);
-  const clearPreview = useCallback(() => setPreviewCourse(null), []);
+  const clearPreview = useCallback(() => {
+    previewActiveKey.current = null;
+    setPreviewCourse(null);
+  }, []);
   interface ProfRatingResult {
     name: string;
     rating: {
@@ -630,6 +653,7 @@ export default function Home() {
     if (res.ok && scheduleFetchId.current === id) {
       // Only apply if this is still the latest fetch (prevents race conditions on term switch)
       setSchedule(await res.json());
+      setScheduleLoaded(true);
     }
   }, [activeTerm]);
 
@@ -644,6 +668,7 @@ export default function Home() {
   // Clear schedule immediately on term switch, then fetch new data
   useEffect(() => {
     setSchedule([]);
+    setScheduleLoaded(false);
     fetchSchedule();
   }, [fetchSchedule]);
 
@@ -1319,7 +1344,8 @@ export default function Home() {
                     return (
                       <div
                         key={`${c.offering_name}-${c.section_name}`}
-                        className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-slate-100 bg-white hover:border-slate-200 transition-colors group"
+                        onClick={() => setSelected(selected?.offering_name === c.offering_name ? null : c)}
+                        className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-slate-100 bg-white hover:border-slate-200 transition-colors group/card cursor-pointer"
                       >
                         <div className="w-1 self-stretch rounded-full shrink-0" style={{ backgroundColor: dc.border }} />
                         <div className="flex-1 min-w-0">
@@ -1328,20 +1354,21 @@ export default function Home() {
                             <span className="text-[10px] text-slate-400">{c.credits} cr</span>
                           </div>
                           <div className="text-[11px] text-slate-700 truncate">{c.title}</div>
-                          <div className="text-[9px] text-slate-400 truncate">
-                            {c.meetings && c.meetings !== "" ? `${c.meetings} · ${c.instructors_full_name || "Staff"}` : c.department || ""}
+                          <div className="text-[9px] truncate">
+                            <span className="text-slate-400 group-hover/card:hidden">{c.meetings && c.meetings !== "" ? `${c.meetings} · ${c.instructors_full_name || "Staff"}` : c.department || ""}</span>
+                            <span className="text-blue-400 hidden group-hover/card:inline">Click for info</span>
                           </div>
                         </div>
                         <button
-                          onClick={async () => {
+                          onClick={async (e) => { e.stopPropagation();
                             await fetch("/api/schedule", {
                               method: "DELETE",
                               headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ offering_name: c.offering_name, term: activeTerm }),
+                              body: JSON.stringify({ offering_name: c.offering_name, section_name: c.section_name, term: activeTerm }),
                             });
                             fetchSchedule();
                           }}
-                          className="text-[10px] text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                          className="text-[10px] text-slate-300 hover:text-red-400 opacity-0 group-hover/card:opacity-100 transition-all shrink-0"
                           title="Remove from plan"
                         >
                           ✕
@@ -1479,7 +1506,7 @@ export default function Home() {
                           await fetch("/api/schedule", {
                             method: "DELETE",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ offering_name: block.course.offering_name, term: activeTerm }),
+                            body: JSON.stringify({ offering_name: block.course.offering_name, section_name: block.course.section_name, term: activeTerm }),
                           });
                           fetchSchedule();
                           if (selected?.offering_name === block.course.offering_name && selected?.section_name === block.course.section_name) {
@@ -1495,8 +1522,11 @@ export default function Home() {
                         <span className="text-[10px] font-bold leading-none truncate">
                           {block.course.offering_name}
                         </span>
-                        <span className="text-[10px] leading-snug truncate mt-0.5 opacity-80">
+                        <span className="text-[10px] leading-snug truncate mt-0.5 opacity-80 group-hover:hidden">
                           {block.course.title}
+                        </span>
+                        <span className="text-[10px] leading-snug truncate mt-0.5 opacity-90 hidden group-hover:block font-medium">
+                          Click for info
                         </span>
                       </div>
                     </div>
@@ -1530,7 +1560,7 @@ export default function Home() {
                           await fetch("/api/schedule", {
                             method: "DELETE",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ offering_name: c.offering_name, term: activeTerm }),
+                            body: JSON.stringify({ offering_name: c.offering_name, section_name: c.section_name, term: activeTerm }),
                           });
                           fetchSchedule();
                         }}
@@ -1571,7 +1601,7 @@ export default function Home() {
                         await fetch("/api/schedule", {
                           method: "DELETE",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ offering_name: selected.offering_name, term: activeTerm }),
+                          body: JSON.stringify({ offering_name: selected.offering_name, section_name: selected.section_name, term: activeTerm }),
                         });
                         setSelected(null); setProfRatings(null); setCourseDetail(null);
                         fetchSchedule();
@@ -1749,17 +1779,31 @@ export default function Home() {
                       <div>
                         <span className="text-[11px] text-slate-400">Areas</span>
                         <div className="flex flex-wrap gap-1 mt-1">
-                          {courseDetail.areas.split(",").map((area) => area.trim()).filter(Boolean).map((area) => {
-                            const isDistro = /^[EHNQ]$/.test(area) || area === "HE";
-                            return (
-                              <span
-                                key={area}
-                                className={`inline-block text-[9px] font-medium px-1.5 py-0.5 rounded border ${isDistro ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold" : "bg-slate-50 text-slate-600 border-slate-200"}`}
-                              >
-                                {area}
-                              </span>
-                            );
-                          })}
+                          {(() => {
+                            const DISTRO_NAMES: Record<string, string> = { E: "Engineering", H: "Humanities", N: "Natural Sciences", Q: "Quantitative", S: "Social Sciences" };
+                            const raw = courseDetail.areas.split(",").map((a: string) => a.trim()).filter(Boolean);
+                            const expanded: string[] = [];
+                            for (const area of raw) {
+                              if (/^[EHNQS]{2,}$/.test(area)) {
+                                for (const ch of area) expanded.push(ch);
+                              } else {
+                                expanded.push(area);
+                              }
+                            }
+                            const unique = [...new Set(expanded)];
+                            return unique.map((area) => {
+                              const isDistro = /^[EHNQS]$/.test(area);
+                              return (
+                                <span
+                                  key={area}
+                                  className={`inline-block text-[9px] font-medium px-1.5 py-0.5 rounded border ${isDistro ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold" : "bg-slate-50 text-slate-600 border-slate-200"}`}
+                                  title={isDistro ? DISTRO_NAMES[area] : undefined}
+                                >
+                                  {isDistro ? `${area} - ${DISTRO_NAMES[area]}` : area}
+                                </span>
+                              );
+                            });
+                          })()}
                         </div>
                       </div>
                     )}
@@ -1790,19 +1834,58 @@ export default function Home() {
       <aside className="w-[380px] shrink-0 border-l border-slate-200 bg-white flex flex-col">
         {/* Chat header — aligned with left top bar */}
         <div className="flex items-center justify-between px-5 h-12 border-b border-slate-200 bg-white/80 backdrop-blur-sm shrink-0">
-          <p className="text-sm font-semibold text-slate-900 tracking-tight">
-            Course Assistant
-          </p>
-          {messages.length > 0 && (
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-slate-900 tracking-tight">
+              Course Assistant
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
             <button
-              onClick={() => setMessages([])}
-              className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
-              title="Clear chat"
+              onClick={() => setFeedbackOpen(true)}
+              className="text-[11px] text-slate-400 hover:text-blue-500 transition-colors"
+              title="Send feedback"
             >
-              Clear
+              Feedback
             </button>
-          )}
+            {messages.length > 0 && (
+              <button
+                onClick={() => { setMessages([]); }}
+                className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+                title="Clear chat"
+              >
+                Clear
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Feedback modal */}
+        {feedbackOpen && (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setFeedbackOpen(false)}>
+            <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-xl p-5 w-[420px] max-w-[90vw] shadow-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-800">Send Feedback</h3>
+                <button onClick={() => setFeedbackOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+              </div>
+              <p className="text-[11px] text-slate-500">Send feedback or issues. Click send to open your email client.</p>
+              <textarea
+                value={feedbackText}
+                onChange={(e) => setFeedbackText(e.target.value)}
+                placeholder="Your feedback..."
+                className="w-full h-32 text-[12px] px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-300 resize-none"
+              />
+              <div className="flex items-center justify-end">
+                <a
+                  href={`mailto:rayhan@live.com?subject=${encodeURIComponent("JHU Course Chat Feedback")}&body=${encodeURIComponent(feedbackText)}`}
+                  onClick={() => { setFeedbackOpen(false); setFeedbackText(""); }}
+                  className={`text-[11px] font-medium px-3 py-1.5 rounded-lg transition-colors ${feedbackText.trim() ? "bg-blue-500 text-white hover:bg-blue-600" : "bg-slate-100 text-slate-300 pointer-events-none"}`}
+                >
+                  Send
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
@@ -1813,10 +1896,10 @@ export default function Home() {
               </p>
               <div className="space-y-1.5">
                 {[
-                  "What are the highest rated courses with the lightest workload?",
-                  "Who are the best rated CS professors teaching this semester?",
-                  "What do I need to take before I can take Intro Algorithms?",
-                  "What courses is Ali Madooei teaching this semester?",
+                  "Add Data Structures section 01 to my schedule and find CS classes that don't conflict",
+                  "Find upper level CS courses rated above 4.0 that don't require Data Structures",
+                  "Which CS professors have the highest RMP ratings and what are they teaching?",
+                  "Find me easy writing intensives on TTh before noon",
                 ].map((s) => (
                   <button
                     key={s}
@@ -1832,6 +1915,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* Agent messages */}
           {messages.map((message, msgIdx) => {
             // Hide assistant messages that have no visible content (only hidden tool parts)
             if (message.role === "assistant") {
@@ -1844,6 +1928,7 @@ export default function Home() {
               className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
+                onMouseLeave={clearPreview}
                 className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 ${
                   message.role === "user"
                     ? "bg-slate-800 text-white"

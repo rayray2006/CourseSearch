@@ -38,7 +38,8 @@ interface SISCourse {
   TermStartDate: string;
 }
 
-async function getCurrentTerm(supabase: ReturnType<typeof createClient>): Promise<string | null> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getCurrentTerm(supabase: any): Promise<string | null> {
   const { data, error } = await supabase
     .from("available_terms")
     .select("term")

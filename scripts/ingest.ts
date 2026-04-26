@@ -159,6 +159,60 @@ async function main() {
     console.log(`  Total for ${term}: ${termTotal} sections`);
   }
 
+  // Re-apply historical evaluation averages to freshly ingested terms
+  console.log("\nApplying historical evaluation data...");
+  const applyEvals = db.prepare(`
+    UPDATE courses
+    SET
+      overall_quality = (SELECT ROUND(AVG(c2.overall_quality), 2) FROM courses c2 WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term AND c2.overall_quality IS NOT NULL),
+      instructor_effectiveness = (SELECT ROUND(AVG(c2.instructor_effectiveness), 2) FROM courses c2 WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term AND c2.instructor_effectiveness IS NOT NULL),
+      intellectual_challenge = (SELECT ROUND(AVG(c2.intellectual_challenge), 2) FROM courses c2 WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term AND c2.intellectual_challenge IS NOT NULL),
+      workload = (SELECT ROUND(AVG(c2.workload), 2) FROM courses c2 WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term AND c2.workload IS NOT NULL),
+      feedback_usefulness = (SELECT ROUND(AVG(c2.feedback_usefulness), 2) FROM courses c2 WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term AND c2.feedback_usefulness IS NOT NULL),
+      num_evaluations = (SELECT SUM(c2.num_evaluations) FROM courses c2 WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term AND c2.num_evaluations IS NOT NULL),
+      num_respondents = (SELECT SUM(c2.num_respondents) FROM courses c2 WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term AND c2.num_respondents IS NOT NULL)
+    WHERE term IN (${terms.map(() => "?").join(",")})
+      AND overall_quality IS NULL
+      AND EXISTS (SELECT 1 FROM courses c2 WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term AND c2.overall_quality IS NOT NULL)
+  `);
+  const evalResult = applyEvals.run(...terms);
+  console.log(`  Applied evals to ${evalResult.changes} courses.`);
+
+  // Apply historical prerequisites, descriptions, corequisites, restrictions
+  console.log("Applying historical prerequisites & descriptions...");
+  const applyPrereqs = db.prepare(`
+    UPDATE courses
+    SET
+      prerequisites = COALESCE(NULLIF(courses.prerequisites, ''), (
+        SELECT c2.prerequisites FROM courses c2
+        WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term
+          AND c2.prerequisites IS NOT NULL AND c2.prerequisites != ''
+        ORDER BY c2.term DESC LIMIT 1
+      )),
+      description = COALESCE(NULLIF(courses.description, ''), (
+        SELECT c2.description FROM courses c2
+        WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term
+          AND c2.description IS NOT NULL AND c2.description != ''
+        ORDER BY c2.term DESC LIMIT 1
+      )),
+      corequisites = COALESCE(NULLIF(courses.corequisites, ''), (
+        SELECT c2.corequisites FROM courses c2
+        WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term
+          AND c2.corequisites IS NOT NULL AND c2.corequisites != ''
+        ORDER BY c2.term DESC LIMIT 1
+      )),
+      restrictions = COALESCE(NULLIF(courses.restrictions, ''), (
+        SELECT c2.restrictions FROM courses c2
+        WHERE c2.offering_name = courses.offering_name AND c2.term != courses.term
+          AND c2.restrictions IS NOT NULL AND c2.restrictions != ''
+        ORDER BY c2.term DESC LIMIT 1
+      ))
+    WHERE term IN (${terms.map(() => "?").join(",")})
+      AND (prerequisites IS NULL OR prerequisites = '')
+  `);
+  const prereqResult = applyPrereqs.run(...terms);
+  console.log(`  Applied prereqs/descriptions to ${prereqResult.changes} courses.`);
+
   console.log(`\n${"=".repeat(40)}`);
   console.log(`Done! Inserted ${grandTotal} total course sections across ${terms.length} terms.`);
 

@@ -4,17 +4,13 @@ import { supabase } from "../supabase";
 import { getActiveTerm } from "./schedule-tools";
 
 export const searchProfessors = tool({
-  description:
-    "Search RateMyProfessors data for JHU professors. IMPORTANT: For 'best' or 'highest rated' queries, use sortBy 'rating_desc' WITHOUT setting minRating. Never filter to an exact rating — always sort and return the top results.",
+  description: "Search RateMyProfessors data. For 'best' queries: sortBy=rating_desc, no minRating.",
   inputSchema: z.object({
-    name: z.string().optional().describe("Professor name (partial match)."),
-    department: z.string().optional().describe("RMP department, e.g. 'Computer Science'"),
-    minRating: z.number().optional().describe("Minimum average rating (1-5)"),
-    maxDifficulty: z.number().optional().describe("Maximum difficulty (1-5)"),
-    sortBy: z
-      .enum(["rating_desc", "rating_asc", "difficulty_desc", "difficulty_asc", "num_ratings_desc"])
-      .optional()
-      .describe("Sort order for results"),
+    name: z.string().optional(),
+    department: z.string().optional(),
+    minRating: z.number().optional(),
+    maxDifficulty: z.number().optional(),
+    sortBy: z.enum(["rating_desc", "rating_asc", "difficulty_desc", "difficulty_asc", "num_ratings_desc"]).optional(),
   }),
   execute: async (input) => {
     let query = supabase
@@ -53,13 +49,11 @@ export const searchProfessors = tool({
 
 export const findRatedInstructors = tool({
   description:
-    "Find the best/worst/easiest/hardest professors who are actually teaching courses in the current semester. Use for ANY superlative query like 'best rated professor teaching this semester'.",
+    "Find best/worst professors teaching this semester.",
   inputSchema: z.object({
-    department: z.string().optional().describe("Filter courses by department, e.g. 'Computer Science'"),
-    sortBy: z
-      .enum(["rating_desc", "rating_asc", "difficulty_desc", "difficulty_asc"])
-      .describe("How to rank"),
-    minRatings: z.number().optional().describe("Minimum RMP ratings (default 3)."),
+    department: z.string().optional(),
+    sortBy: z.enum(["rating_desc", "rating_asc", "difficulty_desc", "difficulty_asc"]),
+    minRatings: z.number().optional(),
   }),
   execute: async (input) => {
     // Get professors with enough ratings
