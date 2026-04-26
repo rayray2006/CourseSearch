@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 
-const MOBILE_QUERY = "(max-width: 767px)";
+// Treat as "mobile" when the viewport is narrow OR the device only has a
+// coarse pointer (touch). Catches phones in portrait + landscape, and small
+// tablets — anything where the desktop 3-column layout falls apart.
+const MOBILE_QUERY = "(max-width: 900px), (pointer: coarse) and (max-width: 1024px)";
 
 export function useIsMobile(): boolean {
-  // Default `false` on the server so SSR renders the desktop tree; we hydrate
-  // and re-render on the client if the viewport actually matches mobile.
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {

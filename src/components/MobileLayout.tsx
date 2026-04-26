@@ -112,7 +112,7 @@ export function MobileLayout(props: MobileLayoutProps) {
   const [tab, setTab] = useState<Tab>("schedule");
 
   return (
-    <div className="flex flex-col h-[100dvh] bg-white text-slate-900">
+    <div className="flex flex-col h-screen [height:100dvh] bg-white text-slate-900 overflow-hidden">
       <MobileHeader
         activeTerm={props.activeTerm}
         setActiveTerm={props.setActiveTerm}
