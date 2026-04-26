@@ -5,6 +5,8 @@ import { DefaultChatTransport } from "ai";
 import { isToolUIPart } from "ai";
 import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from "react";
 import type { CourseAgentUIMessage } from "@/lib/agents/course-agent";
+import { useIsMobile } from "@/lib/use-is-mobile";
+import { MobileLayout } from "@/components/MobileLayout";
 
 
 interface ScheduledCourse {
@@ -276,6 +278,7 @@ interface TermInfo {
 }
 
 export default function Home() {
+  const isMobile = useIsMobile();
   const [activeTerm, setActiveTermState] = useState("Fall 2026");
   const [availableTerms, setAvailableTerms] = useState<TermInfo[]>([]);
   const termsLoaded = availableTerms.length > 0;
@@ -784,6 +787,44 @@ export default function Home() {
   };
   schedule.forEach((c) => addBlocks(c));
   if (previewCourse) addBlocks(previewCourse, true);
+
+  if (isMobile) {
+    return (
+      <MobileLayout
+        activeTerm={activeTerm}
+        setActiveTerm={setActiveTermState}
+        availableTerms={filteredTerms}
+        schedule={schedule}
+        scheduleLoaded={scheduleLoaded}
+        totalCredits={totalCredits}
+        fetchSchedule={fetchSchedule}
+        selected={selected}
+        setSelected={setSelected}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        searchResults={searchResults}
+        searchLoading={searchLoading}
+        programs={programs}
+        loadPrograms={loadPrograms}
+        selectedPrograms={selectedPrograms}
+        setSelectedPrograms={setSelectedPrograms}
+        activeProgram={activeProgram}
+        setActiveProgram={setActiveProgram}
+        loadProgramDetail={loadProgramDetail}
+        programDetails={programDetails}
+        messages={messages}
+        sendMessage={sendMessage}
+        setMessages={setMessages}
+        input={input}
+        setInput={setInput}
+        isLoading={isLoading}
+        validCourses={validCourses}
+        courseSections={courseSections}
+        handlePreview={handlePreview}
+        clearPreview={clearPreview}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full">
