@@ -24,3 +24,11 @@ body {
 .safe-pb {
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+/* Reliable mobile viewport height: prefers svh (smallest, always inside the
+   visible area on iOS Safari even when the URL bar is showing). Falls back
+   to vh on browsers that don't understand svh. */
+.mobile-screen {
+  height: 100vh;
+  height: 100svh;
+}

@@ -68,7 +68,7 @@ export function MobileLayout(props: MobileLayoutProps) {
   const [tab, setTab] = useState<Tab>("schedule");
 
   return (
-    <div className="flex flex-col h-screen [height:100dvh] bg-white text-slate-900 overflow-hidden">
+    <div className="mobile-screen flex flex-col bg-white text-slate-900 overflow-hidden">
       <MobileHeader activeTerm={props.activeTerm} />
 
       <main className="flex-1 min-h-0 overflow-hidden">
@@ -194,25 +194,27 @@ function ScheduleTab(props: MobileLayoutProps) {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Sticky toolbar */}
-      <div className="shrink-0 px-4 py-2.5 flex items-center justify-between border-b border-slate-100 bg-white">
-        <div className="text-[12px] text-slate-500">
-          <span className="font-semibold text-slate-700">{schedule.length}</span> course
-          {schedule.length === 1 ? "" : "s"}
-          <span className="mx-1.5 text-slate-300">·</span>
-          <span className="font-semibold text-slate-700">{totalCredits}</span> credits
+      {/* Toolbar — only when schedule has content (the empty state is the CTA) */}
+      {scheduleLoaded && schedule.length > 0 && (
+        <div className="shrink-0 px-4 py-2.5 flex items-center justify-between border-b border-slate-100 bg-white">
+          <div className="text-[12px] text-slate-500">
+            <span className="font-semibold text-slate-700">{schedule.length}</span> course
+            {schedule.length === 1 ? "" : "s"}
+            <span className="mx-1.5 text-slate-300">·</span>
+            <span className="font-semibold text-slate-700">{totalCredits}</span> credits
+          </div>
+          <button
+            onClick={() => setSearchOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 text-white text-[12px] font-medium active:bg-blue-700"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Add
+          </button>
         </div>
-        <button
-          onClick={() => setSearchOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 text-white text-[12px] font-medium active:bg-blue-700"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          Add
-        </button>
-      </div>
+      )}
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto">
