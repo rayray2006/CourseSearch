@@ -1448,7 +1448,7 @@ export default function Home() {
 
               {/* Grid body */}
               <div
-                className="relative grid"
+                className="relative grid mt-1.5"
                 style={{
                   gridTemplateColumns: "52px repeat(5, 1fr)",
                 }}
